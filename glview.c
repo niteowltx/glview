@@ -10,10 +10,15 @@
 #include <sys/types.h>
 #include <sys/fcntl.h>
 #include <sys/mman.h>
-#include <GL/glut.h>		// if missing: apt-get install freeglut3-dev
-// Missing GL defines?
-#define	GLUT_WHEEL_UP_BUTTON	3
-#define	GLUT_WHEEL_DOWN_BUTTON	4
+#include <GL/freeglut.h>		// if missing: apt-get install freeglut3-dev
+
+// Missing mouse defines?
+#define	GLUT_WHEEL_UP_BUTTON	3	// scroll wheel up
+#define	GLUT_WHEEL_DOWN_BUTTON	4	// scroll wheel down
+#define	GLUT_WHEEL_LEFT_BUTTON	5	// tilt scroll wheel to left
+#define	GLUT_WHEEL_RIGHT_BUTTON	6	// tilt scroll wheel to right
+#define	GLUT_WHEEL_PLUS		7	// mouse '+' button
+#define	GLUT_WHEEL_MINUS	8	// mouse '-' button
 
 //
 //      glview --- simple OpenGL based 2d drawing viewer
@@ -893,6 +898,9 @@ Mouse (int button, int state, int x, int y)
 		if (state == GLUT_UP)
 			return;
 		break;
+	default:
+		printf ("Mouse? button:%d state:%d x:%d y:%d\n", button, state, x, y);
+		break;
 	}
 	glutPostRedisplay ();
 }
@@ -957,7 +965,7 @@ Key (unsigned char key, int x, int y)
 	case 27:		// ESC
 		exit (0);
 	default:
-		printf ("Key %d?\n", key);
+		printf ("Key? key:%d x:%d y:%d\n", key,x,y);
 		break;
 	}
 	glutPostRedisplay ();
@@ -1028,8 +1036,13 @@ SpecialKey (int key, int x, int y)
 		break;
 	case GLUT_KEY_INSERT:
 		break;
+	case GLUT_KEY_SHIFT_L:
+	case GLUT_KEY_SHIFT_R:
+	case GLUT_KEY_CTRL_L:
+	case GLUT_KEY_CTRL_R:
+		break;
 	default:
-		printf ("SpecialKey %d?\n", key);
+		printf ("SpecialKey? key:%d x:%d y:%d\n", key,x,y);
 		break;
 	}
 	glutPostRedisplay ();
