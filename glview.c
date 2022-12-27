@@ -141,7 +141,7 @@ int Fill = GL_FILL;		// current fill mode
 #define	TYPE_FILL	9
 #define	TYPE_WIDTH	10
 
-struct object
+typedef struct object
 {
 	struct object *next;
 	struct object *prev;
@@ -149,7 +149,7 @@ struct object
 	int layer;
 	int arg[6];		// maximum # of integer arguments
 	const char *text;	// at most, a single text argument
-};
+} object_t;
 
 #define	X1	o->arg[0]
 #define	Y1	o->arg[1]
@@ -170,7 +170,7 @@ struct object
 #define	TEXT	o->text
 #define	LAYER	o->layer
 
-struct object Objects = {
+object_t Objects = {
 	.next = &Objects,
 	.prev = &Objects,
 	.type = TYPE_NONE,
@@ -305,10 +305,10 @@ tokenize (char *s, char **tokens, int ntokens)
 // Walk every element in a list from the head, using o as the list item
 #define	OBJECT_WALK(head,o)	for((o)=(head)->next; (o) != (head); (o)=(o)->next)
 
-static inline struct object *
+static inline object_t *
 object_alloc (void)
 {
-	struct object *o = must_zalloc (sizeof (*o));
+	object_t *o = (object_t *)must_zalloc (sizeof (*o));
 
 	o->next = o->prev = o;
 	o->type = TYPE_NONE;
@@ -316,10 +316,10 @@ object_alloc (void)
 	return o;
 }
 
-static inline struct object *
+static inline object_t *
 object_new (const int type, const int arg1, const int arg2, const int arg3, const int arg4, const int arg5, const int arg6, const char *text, const int layer)
 {
-	struct object *o = object_alloc ();
+	object_t *o = object_alloc ();
 
 	o->type = type;
 	o->arg[0] = arg1;
@@ -334,9 +334,9 @@ object_new (const int type, const int arg1, const int arg2, const int arg3, cons
 }
 
 static inline void
-object_add (struct object *a, struct object *b)
+object_add (object_t *a, object_t *b)
 {
-	struct object *an = a->next;
+	object_t *an = a->next;
 
 	b->next = an;
 	b->prev = a;
@@ -344,7 +344,7 @@ object_add (struct object *a, struct object *b)
 }
 
 static inline void
-object_remove (struct object *o)
+object_remove (object_t *o)
 {
 	o->next->prev = o->prev;
 	o->prev->next = o->next;
@@ -500,7 +500,7 @@ Init (FILE * fp)
 {
 	char buf[MAXBUF];
 	char *tokens[MAXTOKENS];
-	struct object *o;
+	object_t *o;
 	int w, h;
 	int cur_layer = 1;
 
@@ -791,7 +791,7 @@ my_glRecti (const int x1, const int y1, const int x2, const int y2, const int z)
 static void
 Render (void)
 {
-	struct object *o;
+	object_t *o;
 
 	glLineWidth ((float) DEF_LINE_WIDTH);
 	glPointSize ((float) DEF_LINE_WIDTH);
