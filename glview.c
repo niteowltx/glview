@@ -148,8 +148,9 @@ struct object
 	int type;
 	int layer;
 	int arg[6];		// maximum # of integer arguments
-	char *text;		// at most, a single text argument
+	const char *text;	// at most, a single text argument
 };
+
 #define	X1	o->arg[0]
 #define	Y1	o->arg[1]
 #define	X2	o->arg[2]
@@ -206,7 +207,7 @@ error (char *format, ...)
 
 // malloc or die
 static inline void *
-must_malloc (int size)
+must_malloc (const int size)
 {
 	void *vp = malloc (size);
 
@@ -217,7 +218,7 @@ must_malloc (int size)
 
 // zalloc or die
 static inline void *
-must_zalloc (int size)
+must_zalloc (const int size)
 {
 	void *vp = must_malloc (size);
 
@@ -233,7 +234,7 @@ must_zalloc (int size)
 //      released via free().
 //
 char *
-strsave (char *s)
+strsave (const char *s)
 {
 	char *p;
 	static int mleft = 0;
@@ -316,7 +317,7 @@ object_alloc (void)
 }
 
 static inline struct object *
-object_new (int type, int arg1, int arg2, int arg3, int arg4, int arg5, int arg6, char *text, int layer)
+object_new (const int type, const int arg1, const int arg2, const int arg3, const int arg4, const int arg5, const int arg6, const char *text, const int layer)
 {
 	struct object *o = object_alloc ();
 
@@ -362,7 +363,7 @@ home_view (void)
 
 // zoom in or out, keeping center at (x,y)
 static void
-set_zoom (double zoom, int x, int y)
+set_zoom (const double zoom, const int x, const int y)
 {
 	if (zoom < Zoom_min || zoom > ZOOM_MAX)
 		return;		// at the limit so ignore it
@@ -383,7 +384,7 @@ range360 (double deg)
 
 // adjust rotation by delta degrees (rotx,roty,rotz), keeping center at (x,y)
 static void
-set_rot (int rotx, int roty, int rotz, int x, int y)
+set_rot (const int rotx, const int roty, const int rotz, const int x, const int y)
 {
 	double oldx = (x / Zoom) - PanX;			// convert from screen point to model <x,y>
 	double oldy = (y / Zoom) + PanY;
@@ -406,7 +407,7 @@ set_rot (int rotx, int roty, int rotz, int x, int y)
 }
 
 static inline int
-clamp (int v, int minv, int maxv)
+clamp (const int v, const int minv, const int maxv)
 {
 	if (v < minv)
 		return minv;
@@ -417,62 +418,62 @@ clamp (int v, int minv, int maxv)
 
 // limit x coordinates to -LARGE,LARGE range
 static inline int
-xcoord (char *s)
+xcoord (const char *s)
 {
 	return clamp (atoi (s), -LARGE, LARGE);
 }
 
 // limit y coordinates to -LARGE,LARGE range
 static inline int
-ycoord (char *s)
+ycoord (const char *s)
 {
 	return clamp (atoi (s), -LARGE, LARGE);
 }
 
 // limit colors to 0-255
 static inline int
-color (char *s)
+color (const char *s)
 {
 	return clamp (atoi (s), 0, 255);
 }
 
 // limit scale
 static inline int
-scale (char *s)
+scale (const char *s)
 {
 	return clamp (atoi (s), 1, 1 << 20);
 }
 
 // limit radius to 1-LARGE
 static inline int
-radius (char *s)
+radius (const char *s)
 {
 	return clamp (atoi (s), 1, LARGE);
 }
 
 // limit angles to 0-360
 static inline int
-angle (char *s)
+angle (const char *s)
 {
 	return clamp (atoi (s), 0, 359);
 }
 
 // limit delta angles to +/-360
 static inline int
-dangle (char *s)
+dangle (const char *s)
 {
 	return clamp (atoi (s), -360, 360);
 }
 
 // limit layer to 1-MAX_LAYERS
 static inline int
-layer (char *s)
+layer (const char *s)
 {
 	return clamp (atoi (s), 1, MAX_LAYERS);
 }
 
 static inline void
-min_max_point (int x, int y)
+min_max_point (const int x, const int y)
 {
 	if (x < Minx)
 		Minx = x;
@@ -631,7 +632,7 @@ is_alt_pressed (void)
 }
 
 static inline void
-bitmap_output (char *s)
+bitmap_output (const char *s)
 {
 	glRasterPos2f (0, 0);
 	while (*s)
@@ -639,14 +640,14 @@ bitmap_output (char *s)
 }
 
 static inline void
-stroke_output (char *s)
+stroke_output (const char *s)
 {
 	while (*s)
 		glutStrokeCharacter (STROKE_FONT, *s++);
 }
 
 static void
-glPrintf (int x, int y, int rot, int scale, int z, char *format, ...)
+glPrintf (const int x, const int y, const int rot, const int scale, const int z, const char *format, ...)
 {
 	va_list args;
 	static char buffer[20000];
@@ -664,10 +665,8 @@ glPrintf (int x, int y, int rot, int scale, int z, char *format, ...)
 }
 
 static void
-glLinei (int x1, int y1, int x2, int y2, int width, int z)
+glLinei (const int x1, const int y1, const int x2, const int y2, const int width, const int z)
 {
-	width /= 2;
-
 	if (width <= 0) {
 		glBegin (GL_LINES);
 		glVertex3i (x1, y1, z);
@@ -710,7 +709,7 @@ glLinei (int x1, int y1, int x2, int y2, int width, int z)
 }
 
 static void
-glArci (int x, int y, int radius, int dstart, int ddelta, int z)
+glArci (const int x, const int y, const int radius, const int dstart, const int ddelta, const int z)
 {
 	double angle_start = dtor ((dstart - 90) % 360);
 	double angle_delta = dtor (ddelta);
@@ -756,7 +755,7 @@ glArci (int x, int y, int radius, int dstart, int ddelta, int z)
 }
 
 static void
-glCirclei (int x, int y, int radius, int z)
+glCirclei (const int x, const int y, const int radius, const int z)
 {
 	double angle;
 
@@ -767,7 +766,7 @@ glCirclei (int x, int y, int radius, int z)
 }
 
 static void
-glTrianglei (int x1, int y1, int x2, int y2, int x3, int y3, int z)
+glTrianglei (const int x1, const int y1, const int x2, const int y2, const int x3, const int y3, const int z)
 {
 	glBegin (GL_TRIANGLES);
 	glVertex3i (x1, y1, z);
@@ -777,7 +776,7 @@ glTrianglei (int x1, int y1, int x2, int y2, int x3, int y3, int z)
 }
 
 static void
-my_glRecti (int x1, int y1, int x2, int y2, int z)
+my_glRecti (const int x1, const int y1, const int x2, const int y2, const int z)
 {
 	glBegin (GL_POLYGON);
 	glVertex3i (x1, y1, z);
@@ -805,7 +804,7 @@ Render (void)
 		case TYPE_LINE:
 			if (Layer[LAYER] == 0)
 				continue;
-			glLinei (X1, Y1, X2, Y2, Width, ltoz (LAYER));
+			glLinei (X1, Y1, X2, Y2, Width / 2, ltoz (LAYER));
 			break;
 		case TYPE_POINT:
 			if (Layer[LAYER] == 0)
@@ -854,7 +853,7 @@ Render (void)
 }
 
 static void
-Motion (int x, int y)
+Motion (const int x, const int y)
 {
 	if (!Moveactive)
 		return;
@@ -867,7 +866,7 @@ Motion (int x, int y)
 }
 
 static void
-Mouse (int button, int state, int x, int y)
+Mouse (const int button, const int state, const int x, const int y)
 {
 	switch (button) {
 	case GLUT_WHEEL_UP_BUTTON:
@@ -923,7 +922,7 @@ Draw (void)
 }
 
 static void
-Key (unsigned char key, int x, int y)
+Key (const unsigned char key, const int x, const int y)
 {
 	(void) x;
 	(void) y;
@@ -972,7 +971,7 @@ Key (unsigned char key, int x, int y)
 }
 
 static void
-SpecialKey (int key, int x, int y)
+SpecialKey (const int key, const int x, const int y)
 {
 	switch (key) {
 	case GLUT_KEY_LEFT:
@@ -1049,7 +1048,7 @@ SpecialKey (int key, int x, int y)
 }
 
 static void
-Reshape (int width, int height)
+Reshape (const int width, const int height)
 {
 	glViewport (0, 0, width, height);
 	glMatrixMode (GL_PROJECTION);	// Start modifying the projection matrix.
