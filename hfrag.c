@@ -11,7 +11,7 @@
 
 #define	SCALE	32
 
-#define	ORDER	13	/* (2^(13*2) = 64Mb */
+#define	ORDER	14	/* total map size: (2^(ORDER*2) e.g. 13=64Mb */
 
 int Layer_base = 1;
 
@@ -87,8 +87,10 @@ gen_map(FILE *fp)
 	unsigned long int len;
 
 	while( fgets(buf,sizeof(buf),fp) != NULL ){
-		sscanf(buf,"%llx %lx",&addr,&len);
-		draw_area(addr,len);
+		if( buf[0]=='#' )
+			continue;
+		if( sscanf(buf,"%llx %lx",&addr,&len)==2 )
+			draw_area(addr,len);
 		}
 }
 
