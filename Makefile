@@ -1,13 +1,15 @@
 
 
-CFLAGS += -O3  -Wall -Wextra -Werror
-TARGETS = glview tgen hilbert fraggen hfrag
+CFLAGS += -g -O3 -Wall -Wextra -Werror
+TARGETS = glview tgen hilbert fraggen hfrag example
 
 BIN = ~/bin
 
 all:	${TARGETS}
 
 glview:		LDLIBS = -lglut -lGLU -lGL -lXext -lX11 -lm 
+
+example:		LDLIBS = -lglut -lGLU -lGL -lXext -lX11 -lm 
 
 test: ${TARGETS}
 	./fraggen | ./hfrag | ./glview
