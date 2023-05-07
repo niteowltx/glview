@@ -122,6 +122,8 @@ int Maxx = -(LARGE - 1);
 int Maxy = -(LARGE - 1);
 int Minx = LARGE + 1;
 int Miny = LARGE + 1;
+int View_width = INIT_MAX_WIDTH;
+int View_height = INIT_MAX_HEIGHT;
 
 int Width = 1;			// current line/arc width
 bool Fill = false;		// current fill mode
@@ -186,22 +188,18 @@ GLuint ShaderProg;
 const char *VertexShader = 
 	"#version 330 core\n"
 	"layout (location = 0) in vec3 aPos;\n"
-	"layout (location = 1) in vec3 aColor;\n"
-	"layout (location = 2) in vec2 aTexCoord;\n"
-	"out vec3 ourColor;\n"
+	"layout (location = 1) in vec2 aTexCoord;\n"
 	"out vec2 TexCoord;\n"
 	"void main()\n"
 	"{\n"
 	"    gl_Position = vec4(aPos, 1.0);\n"
-	"    ourColor = aColor;\n"
 	"    TexCoord = aTexCoord;\n"
 	"}\n";
 
 const char *FragmentShader =
 	"#version 330 core\n"
-	"out vec4 FragColor;\n"
-	"in vec3 ourColor;\n"
 	"in vec2 TexCoord;\n"
+	"out vec4 FragColor;\n"
 	"uniform sampler2D ourTexture;\n"
 	"void main()\n"
 	"{\n"
@@ -605,86 +603,115 @@ err_check(const char *tag)
 	default:				s="UNKNOWN"; break;
 	}
 	
-	printf("ERROR %s: %x %s\n",tag,err,s);
+	fatal("%s: %x %s\n",tag,err,s);
+}
+
+static inline GLuint
+must_glCreateShader(const GLenum stype)
+{
+	GLuint sobj = glCreateShader(stype);
+	err_check("CreateShader");
+	if( sobj==0 )
+		fatal("CreateShaderZero");
+	return sobj;
+}
+
+static inline void
+must_glShaderSource(const GLuint sobj, const GLint count, const char **code, const GLint *len)
+{
+	glShaderSource(sobj,count,code,len);
+	err_check("ShaderSource");
+}
+
+static inline void
+must_glCompileShader(const GLuint sobj)
+{
+	GLint success;
+	GLchar buf[1024];
+
+	glCompileShader(sobj);
+	err_check("CompileShader");
+	glGetShaderiv (sobj, GL_COMPILE_STATUS, &success);
+	if(success==0){
+		glGetShaderInfoLog (sobj, sizeof(buf), NULL, buf);
+		fatal("GetShaderivZero <%s>",buf);
+		}
+}
+
+static inline void
+must_glAttachShader(const GLuint sprog, const GLuint sobj)
+{
+	glAttachShader(sprog,sobj);
+	err_check("AttachShader");
+}
+
+static inline GLuint
+must_glCreateProgram()
+{
+	GLuint sprog = glCreateProgram();
+
+	err_check("CreateProgram");
+	if( sprog==0 )
+		fatal("CreateProgramZero");
+	return sprog;
+}
+
+static inline void
+must_glLinkProgram(const GLuint sprog)
+{
+	GLint success = 0;
+	GLchar buf[1024];
+
+	glLinkProgram(sprog);
+	err_check("LinkProgram");
+	glGetProgramiv (sprog, GL_LINK_STATUS, &success);
+	if (success == 0) {
+		glGetProgramInfoLog (sprog, sizeof (buf), NULL, buf);
+		fatal ("LinkProgramZero: %s", buf);
+	}
+}
+
+static inline void
+must_glValidateProgram(const GLuint sprog)
+{
+	GLint success = 0;
+	GLchar buf[1024];
+
+	glValidateProgram (sprog);
+	err_check("ValidateProgram");
+	glGetProgramiv (sprog, GL_VALIDATE_STATUS, &success);
+	if (success == 0) {
+		glGetProgramInfoLog (sprog, sizeof (buf), NULL, buf);
+		fatal ("ValidateProgramZero: %s", buf);
+	}
 }
 
 static inline void
 shader_add (const GLuint sprog, const GLenum stype, const char *code)
 {
 	GLint len;
-	GLint success;
-	GLchar buf[1024];
-	GLuint sobj = glCreateShader (stype);
-
-err_check("CreateShader");
-	if (sobj == 0)
-		fatal ("CreateShader %d", stype);
+	GLuint sobj = must_glCreateShader (stype);
 
 	len = strlen (code);
-	glShaderSource (sobj, 1, &code, &len);
-err_check("ShaderSource");
-	glCompileShader (sobj);
-err_check("CompileShader");
-	glGetShaderiv (sobj, GL_COMPILE_STATUS, &success);
-err_check("GetShaderiv");
-	if (success == 0) {
-		glGetShaderInfoLog (sobj, sizeof(buf), NULL, buf);
-		fatal ("CompileShader stype:%d  %s", stype, buf);
-	}
-	glAttachShader (sprog, sobj);
-err_check("AttachShader");
+	must_glShaderSource (sobj, 1, &code, &len);
+	must_glCompileShader (sobj);
+	must_glAttachShader (sprog, sobj);
 }
-
 
 static inline void
 shader_init ()
 {
-	GLint success = 0;
 	static bool init_done = false;
-	GLchar buf[1024];
 
 	if( init_done )	// do this once when the first image is setup
 		return;
 
-	if( (ShaderProg = glCreateProgram ()) == 0 )
-		fatal ("CreateProgram");
-err_check("CreateProgram");
-
+	ShaderProg = must_glCreateProgram();
 	shader_add (ShaderProg, GL_VERTEX_SHADER, VertexShader);
 	shader_add (ShaderProg, GL_FRAGMENT_SHADER, FragmentShader);
+	must_glLinkProgram (ShaderProg);
+	must_glValidateProgram (ShaderProg);
 
-	glLinkProgram (ShaderProg);
-err_check("LinkProgram");
-	glGetProgramiv (ShaderProg, GL_LINK_STATUS, &success);
-err_check("GetProgramiv1");
-	if (success == 0) {
-		glGetProgramInfoLog (ShaderProg, sizeof (buf), NULL, buf);
-		fatal ("LinkProgram: %s", buf);
-	}
-
-	glValidateProgram (ShaderProg);
-err_check("ValidateProgram");
-	glGetProgramiv (ShaderProg, GL_VALIDATE_STATUS, &success);
-err_check("GetProgramiv2");
-	if (success == 0) {
-		glGetProgramInfoLog (ShaderProg, sizeof (buf), NULL, buf);
-		fatal ("ValidateProgram: %s", buf);
-	}
-
-#if 0
-	glUseProgram (ShaderProg);
-err_check("UseProgram");
-	WVPLocation = glGetUniformLocation (ShaderProg, "gWVP");
-err_check("GetUniformLoc1");
-printf("WVPLoc %d\n",WVPLocation);
-	Sampler     = glGetUniformLocation (ShaderProg, "Sampler");
-err_check("GetUniformLoc2");
-printf("Sampler %d\n",Sampler);
-	glUniform1i (Sampler, 0);	// 0 == GL_TEXTURE0
-err_check("GetUniform1i");
-	glUseProgram (0);
-err_check("UseProgram0");
-#endif
 	init_done = true;
 }
 
@@ -746,64 +773,93 @@ image_load(object_t *o)
 	o->x3 = w;		// keep actual image size here
 	o->y3 = h;
 	o->image = img;
-	printf("Loaded Image %s: width:%d height:%d\n",o->text,o->x3,o->y3);	// DEBUG
+	//printf("Loaded Image %s: width:%d height:%d\n",o->text,o->x3,o->y3);	// DEBUG
 }
 
-#define	X	0.5
-#define	Y	0.5
-#define	Z	0.0
+
+
+// given an image with position (x1,y1), size (x3,y3) and
+// using the current PanX,PanY,Zoom,View_width,View_height settings,
+// fill in the vert array.  TODO: also apply rotation?
+static inline void
+image_position(const object_t *o, float *vert)
+{
+	float	w  = (Maxx-Minx);	// effective view width
+	float	h  = (Maxy-Miny);	// effective view width
+	float	cx = Minx+(w/2);	// center
+	float	cy = Miny+(h/2);	// center
+	float	xl = (((o->x1-cx)/w)-0.0)*2;
+	float	xr = (((o->x2-cx)/w)-0.0)*2;
+	float	yb = (((o->y1-cy)/h)-0.0)*2;
+	float	yt = (((o->y2-cy)/h)-0.0)*2;
+
+printf("=======================\n");
+object_print(o);
+printf("Minx:%d Miny:%d Maxx:%d Maxy:%d\n",Minx,Miny,Maxx,Maxy);
+printf("PanX:%7.3f PanY:%7.3f Zoom:%7.3f ViewW:%d ViewH:%d\n",PanX,PanY,Zoom,View_width,View_height);
+printf("w:%7.3f h:%7.3f center:%7.3f,%7.3f\n",w,h,cx,cy);
+printf("x:%-7d y:%-7d xl:%7.3f yb:%7.3f\n",o->x1,o->y1,xl,yb);
+printf("x:%-7d y:%-7d xr:%7.3f yt:%7.3f\n",o->x2,o->y2,xr,yt);
+printf("\n");
+
+	vert[0]  = xr;	// X of top right
+	vert[1]  = yt;	// Y of top right
+	vert[2]  = 0;	// Z of top right (always zero?)
+	vert[3]  = 1.0;	// Texture X top right
+	vert[4]  = 1.0;	// Texture Y top right
+
+	vert[5]  = xr;	// X of bottom right
+	vert[6]  = yb;	// Y of bottom right
+	vert[7]  = 0;	// Z of bottom right (always zero?)
+	vert[8]  = 1.0;	// Texture X bottom right
+	vert[9]  = 0.0;	// Texture Y bottom right
+
+	vert[10] = xl;	// X of bottom left
+	vert[11] = yb;	// Y of bottom left
+	vert[12] = 0;	// Z of bottom left (always zero?)
+	vert[13] = 0.0;	// Texture X bottom left
+	vert[14] = 0.0;	// Texture Y bottom left
+
+	vert[15] = xl;	// X of top left
+	vert[16] = yt;	// Y of top left
+	vert[17] = 0;	// Z of top left (always zero?)
+	vert[18] = 0.0;	// Texture X top left
+	vert[19] = 1.0;	// Texture Y top left
+}
+
 // convert image bytes into a texture (must be called after glutInit and glutCreateWindow)
 // also setup various indices
 static inline void
-image_finalize (object_t *o, const int z)
+image_finalize (object_t *o)
 {
-	//	2---3
-	//	|   |
-	//	0---1
-	float vert[] = {
-		// positions          // colors         // texture coords
-		 X,  Y, Z,	1.0f, 0.0f, 0.0f,	1.0f, 1.0f,	// top right
-		 X, -Y, Z,	0.0f, 1.0f, 0.0f,	1.0f, 0.0f,	// bottom right
-		-X, -Y, Z,	0.0f, 0.0f, 1.0f,	0.0f, 0.0f,	// bottom left
-		-X,  Y, Z,	1.0f, 1.0f, 0.0f,	0.0f, 1.0f	// top left 
-	};
-	unsigned int idx[] = { 0, 1, 3,   1, 2, 3 };	// 2 triangles to cover the rectangle
+	//	ul 3---0 ur
+	//	   |   |
+	//	ll 2---1 lr
+	float vert[4*5];	// 4 points, each has (XYZ position + XY texture)==5
+	unsigned int idx[] = { 0, 1, 3,   1, 2, 3, };	// 2 CW triangles to cover the rectangle
 
-	(void)z;
-	//	Position
-	//vert[0]  = o->x1; vert[1]  = o->y1; vert[2]  = z;	// lower left
-	//vert[8]  = o->x2; vert[9]  = o->y1; vert[10] = z;	// lower right
-	//vert[16] = o->x1; vert[17] = o->y2; vert[18] = z;	// upper left
-	//vert[24] = o->x2; vert[25] = o->y2; vert[26] = z;	// upper right
+	image_position(o,vert);	// set initial parameters
 
 	glGenVertexArrays (1, &o->vao);
 err_check("GenVao");
 	glBindVertexArray (o->vao);
 err_check("BindVao");
-
 	glGenBuffers (1, &o->vbo);
 err_check("GenVbo");
 	glBindBuffer (GL_ARRAY_BUFFER, o->vbo);
 err_check("BindVbo");
 	glBufferData (GL_ARRAY_BUFFER, sizeof (vert), vert, GL_STATIC_DRAW);
 err_check("BufferVbo");
-
 	glGenBuffers (1, &o->ibo);
 err_check("GenIbo");
 	glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, o->ibo);
 err_check("BindIbo");
 	glBufferData (GL_ELEMENT_ARRAY_BUFFER, sizeof (idx), idx, GL_STATIC_DRAW);
 err_check("BufferIbo");
-
-	// position attribute
-	glVertexAttribPointer (0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof (float), (void *) (0 * sizeof (float)));
-	glEnableVertexAttribArray (0);
-	// color attribute
-	glVertexAttribPointer (1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof (float), (void *) (3 * sizeof (float)));
-	glEnableVertexAttribArray (1);
-	// texture coord attribute
-	glVertexAttribPointer (2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof (float), (void *) (6 * sizeof (float)));
-	glEnableVertexAttribArray (2);
+	glVertexAttribPointer (0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof (float), (void *) (0 * sizeof (float)));
+err_check("VertexAttrib0");
+	glVertexAttribPointer (1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof (float), (void *) (3 * sizeof (float)));
+err_check("VertexAttrib1");
 
 	o->texture = ~0;
 	glGenTextures(1, &o->texture);
@@ -1160,7 +1216,7 @@ err_check("GetModelView");
 static inline void
 render_image (const object_t *o, const int z)
 {
-	//GLfloat	view[16];
+	float	vert[4*5];
 
 	(void)z;
 
@@ -1171,9 +1227,11 @@ err_check("UseProgram");
 	glBindVertexArray (o->vao);
 err_check("BindVertex");
 
+	image_position(o,vert);	// set current parameters
+	glBufferData (GL_ARRAY_BUFFER, sizeof (vert), vert, GL_STATIC_DRAW);
+err_check("BufferVbo");
 	glEnableVertexAttribArray (0);
 	glEnableVertexAttribArray (1);
-	glEnableVertexAttribArray (2);
 #if 0
 	glUniform1i (Sampler, 0);	// 0 == GL_TEXTURE0 + 0
 err_check("Uniform1i");
@@ -1201,19 +1259,15 @@ err_check("VertexAttribPointer1");
 #endif
 
 	glPolygonMode (GL_FRONT_AND_BACK, GL_FILL );
+err_check("PolygonModeFill");
 	glDrawElements (GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-	glPolygonMode (GL_FRONT_AND_BACK, Fill ? GL_FILL : GL_LINE);
 err_check("DrawElements");
-	glDisableVertexAttribArray (0);
-	glDisableVertexAttribArray (1);
-	glDisableVertexAttribArray (2);
-
-#if 0
+	glPolygonMode (GL_FRONT_AND_BACK, Fill ? GL_FILL : GL_LINE);
+err_check("PolygonModeRest");
 	glDisableVertexAttribArray (0);
 err_check("DisableVertexAttribArray0");
 	glDisableVertexAttribArray (1);
 err_check("DisableVertexAttribArray1");
-#endif
 	glUseProgram (0);
 err_check("UseProgramDone");
 }
@@ -1528,25 +1582,29 @@ Reshape (const int width, const int height)
 
 	//glScalef(1, -1, 1);                   // Invert Y axis so increasing Y goes down.
 	glTranslatef (0, height, 0);		// Shift origin up to upper-left corner.
+
+	View_width = width;
+	View_height = height;
 }
 
 static void
 WindowSetup (void)
 {
-	int		width = Maxx - Minx;
-	int		height = Maxy - Miny;
 	double		zx, zy;			// zoom required to fit in x and y directions
 	object_t	*o;
 
+	View_width = Maxx - Minx;
+	View_height = Maxy - Miny;
+
 	// if the image is too big for a maximum window, adjust Zoom to make it initially fit
-	if (width > INIT_MAX_WIDTH || height > INIT_MAX_HEIGHT) {
-		zx = INIT_MAX_WIDTH / (double) width;
-		zy = INIT_MAX_HEIGHT / (double) height;
+	if (View_width > INIT_MAX_WIDTH || View_height > INIT_MAX_HEIGHT) {
+		zx = INIT_MAX_WIDTH / (double) View_width;
+		zy = INIT_MAX_HEIGHT / (double) View_height;
 		Zoom = zx < zy ? zx : zy;
 		if (Zoom < ZOOM_MIN)
 			Zoom = ZOOM_MIN;
-		width *= Zoom;
-		height *= Zoom;
+		View_width *= Zoom;
+		View_height *= Zoom;
 	}
 	Zoom_min = Zoom / 2;	// limit zoom out to half the initial window size
 
@@ -1560,14 +1618,14 @@ WindowSetup (void)
 	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glutInitDisplayMode (GLUT_RGB | GLUT_DOUBLE);
 
-	glutInitWindowSize (width, height);
+	glutInitWindowSize (View_width, View_height);
 	glutCreateWindow (Title);
 
 	OBJECT_WALK (o) {	// finalize images
 		if( o->image != NULL ){
 			shader_init();
-			image_finalize(o, ltoz(o->layer));	// convert all raw image bytes to vbo,ibo,texture form
-			printf("Image:%s texture:%d, vbo:%d ibo:%d vao:%d\n",o->text,o->texture,o->vbo,o->ibo,o->vao);
+			image_finalize(o);	// convert raw image bytes to vbo,ibo,texture form
+			//printf("Image:%s texture:%d, vbo:%d ibo:%d vao:%d\n",o->text,o->texture,o->vbo,o->ibo,o->vao);
 			}
 		}
 
