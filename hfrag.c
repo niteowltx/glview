@@ -11,7 +11,7 @@
 
 #define	SCALE	32
 
-#define	ORDER	14	/* total map size: (2^(ORDER*2) e.g. 13=64Mb */
+#define	ORDER	14	// total map size: (2^(ORDER*2) e.g. 13=64Mb
 
 int Layer_base = 1;
 
@@ -47,7 +47,7 @@ draw_range(unsigned int addr, unsigned int len)
 				break;
 			}
 		hilbert(addr,ORDER,&x,&y);
-		if( (x % (1<<order))==0 )	/* returned point may be lower left or upper right */
+		if( (x % (1<<order))==0 )	// returned point may be lower left or upper right
 			printf("Rectangle %d %d %d %d\n",x*SCALE,y*SCALE,(x+(1<<order))*SCALE,(y+(1<<order))*SCALE);
 		else
 			printf("Rectangle %d %d %d %d\n",(x-(1<<order)+1)*SCALE,(y-(1<<order)+1)*SCALE,(x+1)*SCALE,(y+1)*SCALE);
@@ -63,8 +63,8 @@ draw_text(unsigned int addr, unsigned int len)
 
 	hilbert(addr,ORDER,&x,&y);
 
-	printf("Text %d %d 0 %d %x\n",    (x*SCALE)+(SCALE/32),(y*SCALE)+(SCALE/32)+(SCALE/8), SCALE/16,addr);
-	printf("Text %d %d 0 %d %x\n",    (x*SCALE)+(SCALE/32),(y*SCALE)+(SCALE/32)+(SCALE/16),SCALE/16,len);
+	printf("Text %d %d 0 %d %x\n",    (x*SCALE)+(SCALE/32),(y*SCALE)+(SCALE/32)+(SCALE/4),SCALE/8,addr);
+	printf("Text %d %d 0 %d %x\n",    (x*SCALE)+(SCALE/32),(y*SCALE)+(SCALE/32)+(SCALE/8),SCALE/8,len);
 }
 
 static inline void
