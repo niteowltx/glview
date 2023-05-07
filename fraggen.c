@@ -21,7 +21,7 @@ frag_t	Frags[MAXFRAGS];
 
 #define	FRAG_COUNT	1000000
 unsigned long int	Minfrag = 0;
-unsigned long int	Maxfrag = 16;
+unsigned long int	Maxfrag = 19;
 
 void	*Minaddr = (void *)~0;
 void	*Maxaddr = 0;
