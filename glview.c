@@ -35,7 +35,7 @@
 //              Arc x1 y1 radius start_angle delta_angle
 //              Triangle x1 y1 x2 y2 x3 y3
 //              Text x1 y1 angle scale "string"
-//              Image x1 y1 x2 y2 "filename" [EXPERIMENTAL]
+//              Image x1 y1 "filename"
 //
 //              Color cr cg cb          # 0-255 for each color
 //              Fill                    # Rectangle, Circle, Triangle are filled
@@ -107,7 +107,7 @@ bool Layer[MAX_LAYERS + 1];
 
 char *Title = "Viewer";
 
-// Original Pan, Zoom values.  Original Rot[XYZ] are always 0
+// Original Pan, Zoom values.  Rot[XYZ]_home are always 0
 double Zoom_home;
 double PanX_home;
 double PanY_home;
@@ -158,9 +158,6 @@ typedef struct object
 	int		rotate,radius,dstart,ddelta;
 	const char	*text;		// at most, a single text argument
 	uint8_t		*image;		// raw image bytes
-	GLuint		vao;		// image: vector array object
-	GLuint		vbo;		// image: vector buffer object
-	GLuint		ibo;		// image: index buffer object
 	GLuint		texture;	// image: as a texture object
 } object_t;
 
@@ -182,33 +179,9 @@ object_t Root = {
 	.text   = "",
 };
 
-// image handling
-GLuint ShaderProg;
-
-const char *VertexShader = 
-	"#version 330 core\n"
-	"layout (location = 0) in vec3 aPos;\n"
-	"layout (location = 1) in vec2 aTexCoord;\n"
-	"out vec2 TexCoord;\n"
-	"void main()\n"
-	"{\n"
-	"    gl_Position = vec4(aPos, 1.0);\n"
-	"    TexCoord = aTexCoord;\n"
-	"}\n";
-
-const char *FragmentShader =
-	"#version 330 core\n"
-	"in vec2 TexCoord;\n"
-	"out vec4 FragColor;\n"
-	"uniform sampler2D ourTexture;\n"
-	"void main()\n"
-	"{\n"
-	"    FragColor = texture(ourTexture, TexCoord);\n"
-	"}\n";
-
 // Utilities --------------------------------------------------------------------
 
-//      fatal --- print error message and exit
+// print error message and exit
 void
 fatal (char *format, ...)
 {
@@ -222,7 +195,7 @@ fatal (char *format, ...)
 	exit (1);
 }
 
-//      error --- print error message
+// print error message
 void
 error (char *format, ...)
 {
@@ -256,13 +229,9 @@ must_zalloc (const int size)
 	return vp;
 }
 
-//
-//      strsave --- save a string somewhere safe
-//
-//      A copy of the string is made in a malloc'ed area.  The return
-//      pointer points to the copy.  The returned pointer CANNOT be
-//      released via free().
-//
+// A copy of the string is made in a malloc'ed area.  The return
+// pointer points to the copy.  The returned pointer CANNOT be
+// released via free().
 char *
 strsave (const char *s)
 {
@@ -295,11 +264,10 @@ skipwhite (char *s)
 }
 
 //
-//      tokenize --- split string into argv[] style array of pointers
+// split string into argv[] style array of pointers
 //
-//      Modifies 's' by inserting '\0'.  The tokens array will have a NULL
-//      added at the end of the real tokens.
-//
+// Modifies 's' by inserting '\0'.  The tokens array will have a NULL
+// added at the end of the real tokens.
 int
 tokenize (char *s, char **tokens, int ntokens)
 {
@@ -414,8 +382,6 @@ object_print(const object_t *o)
 	if(o->dstart) printf("Dst:%d ",o->dstart);
 	if(o->ddelta) printf("Ddl:%d ",o->ddelta);
 	if(o->text)   printf("Txt:<%s> ",o->text);
-	if(o->vbo)    printf("Vbo:%d ",o->vbo);
-	if(o->ibo)    printf("Ibo:%d ",o->ibo);
 	if(o->texture)printf("Ttr:%d ",o->texture);
 	printf("\n");
 }
@@ -606,267 +572,39 @@ err_check(const char *tag)
 	fatal("%s: %x %s\n",tag,err,s);
 }
 
-static inline GLuint
-must_glCreateShader(const GLenum stype)
+static inline void
+must_glGetFloatv(const GLuint which, float *out)
 {
-	GLuint sobj = glCreateShader(stype);
-	err_check("CreateShader");
-	if( sobj==0 )
-		fatal("CreateShaderZero");
-	return sobj;
+	glGetFloatv(which,out);
+	err_check("GetFloatv");
 }
 
 static inline void
-must_glShaderSource(const GLuint sobj, const GLint count, const char **code, const GLint *len)
+must_glUseProgram(const GLuint sprog)
 {
-	glShaderSource(sobj,count,code,len);
-	err_check("ShaderSource");
+	glUseProgram(sprog);
+	err_check("UseProgram");
 }
 
 static inline void
-must_glCompileShader(const GLuint sobj)
+must_glEnable(const GLuint feature)
 {
-	GLint success;
-	GLchar buf[1024];
-
-	glCompileShader(sobj);
-	err_check("CompileShader");
-	glGetShaderiv (sobj, GL_COMPILE_STATUS, &success);
-	if(success==0){
-		glGetShaderInfoLog (sobj, sizeof(buf), NULL, buf);
-		fatal("GetShaderivZero <%s>",buf);
-		}
+	glEnable(feature);
+	err_check("Enable");
 }
 
 static inline void
-must_glAttachShader(const GLuint sprog, const GLuint sobj)
+must_glDisable(const GLuint feature)
 {
-	glAttachShader(sprog,sobj);
-	err_check("AttachShader");
-}
-
-static inline GLuint
-must_glCreateProgram()
-{
-	GLuint sprog = glCreateProgram();
-
-	err_check("CreateProgram");
-	if( sprog==0 )
-		fatal("CreateProgramZero");
-	return sprog;
+	glDisable(feature);
+	err_check("Disable");
 }
 
 static inline void
-must_glLinkProgram(const GLuint sprog)
+must_glPolygonMode(const GLuint which, const GLuint arg)
 {
-	GLint success = 0;
-	GLchar buf[1024];
-
-	glLinkProgram(sprog);
-	err_check("LinkProgram");
-	glGetProgramiv (sprog, GL_LINK_STATUS, &success);
-	if (success == 0) {
-		glGetProgramInfoLog (sprog, sizeof (buf), NULL, buf);
-		fatal ("LinkProgramZero: %s", buf);
-	}
-}
-
-static inline void
-must_glValidateProgram(const GLuint sprog)
-{
-	GLint success = 0;
-	GLchar buf[1024];
-
-	glValidateProgram (sprog);
-	err_check("ValidateProgram");
-	glGetProgramiv (sprog, GL_VALIDATE_STATUS, &success);
-	if (success == 0) {
-		glGetProgramInfoLog (sprog, sizeof (buf), NULL, buf);
-		fatal ("ValidateProgramZero: %s", buf);
-	}
-}
-
-static inline void
-shader_add (const GLuint sprog, const GLenum stype, const char *code)
-{
-	GLint len;
-	GLuint sobj = must_glCreateShader (stype);
-
-	len = strlen (code);
-	must_glShaderSource (sobj, 1, &code, &len);
-	must_glCompileShader (sobj);
-	must_glAttachShader (sprog, sobj);
-}
-
-static inline void
-shader_init ()
-{
-	static bool init_done = false;
-
-	if( init_done )	// do this once when the first image is setup
-		return;
-
-	ShaderProg = must_glCreateProgram();
-	shader_add (ShaderProg, GL_VERTEX_SHADER, VertexShader);
-	shader_add (ShaderProg, GL_FRAGMENT_SHADER, FragmentShader);
-	must_glLinkProgram (ShaderProg);
-	must_glValidateProgram (ShaderProg);
-
-	init_done = true;
-}
-
-// load image from filename
-static inline void
-image_load(object_t *o)
-{
-	FILE	*fp;
-	char	tmp[MAXBUF];
-	int	w=0,h=0;
-	int	img_bytes = 0;
-	uint8_t	*img;
-	uint8_t	*p;
-	size_t	nread;
-	int	remaining;
-
-	o->image = NULL;
-	sprintf(tmp,"identify -format \"%%w %%h\\n\" %s 2>/dev/null\n",o->text);
-	fp = popen(tmp,"r");
-	if( fp==NULL ){
-		printf("Failed to open image %s width,height\n",o->text);
-		return;
-		}
-	if( fgets(tmp,sizeof(tmp),fp) == NULL ){
-		printf("Failed to read image %s width,height\n",o->text);
-		pclose(fp);
-		return;
-		}
-	pclose(fp);
-	if( sscanf(tmp,"%d %d",&w,&h) != 2 ){
-		printf("Failed to convert image %s width,height\n",o->text);
-		return;
-		}
-
-	img_bytes = w*h*3;
-	img = malloc(img_bytes);
-	if( img==NULL ){
-		printf("image_load too big %s %d x %d\n",o->text,w,h);
-		return;
-		}
-
-	// use ImageMagick to convert to raw RGB and also flip the image vertically
-	sprintf(tmp,"convert %s -size 3 -depth 8 -flip RGB:- 2>/dev/null",o->text);
-	fp = popen(tmp,"r");
-	for(p=img, remaining=img_bytes; remaining; remaining -= nread, p += nread){
-		nread = fread(p,1,remaining,fp);
-		if( nread == 0 )
-			break;
-		}
-	pclose(fp);
-	if( remaining != 0 ) {
-		printf("Failed to read image %s remaining:%d\n",o->text,remaining);
-		free(img);
-		return;
-		}
-
-	o->x2 = o->x1 + w;	// upper right corner
-	o->y2 = o->y1 + h;
-	o->x3 = w;		// keep actual image size here
-	o->y3 = h;
-	o->image = img;
-	//printf("Loaded Image %s: width:%d height:%d\n",o->text,o->x3,o->y3);	// DEBUG
-}
-
-
-
-// given an image with position (x1,y1), size (x3,y3) and
-// using the current PanX,PanY,Zoom,View_width,View_height settings,
-// fill in the vert array.  TODO: also apply rotation?
-static inline void
-image_position(const object_t *o, float *vert)
-{
-	float	w  = (Maxx-Minx);	// effective view width
-	float	h  = (Maxy-Miny);	// effective view width
-	float	cx = Minx+(w/2);	// center
-	float	cy = Miny+(h/2);	// center
-	float	xl = (((o->x1-cx)/w)-0.0)*2;
-	float	xr = (((o->x2-cx)/w)-0.0)*2;
-	float	yb = (((o->y1-cy)/h)-0.0)*2;
-	float	yt = (((o->y2-cy)/h)-0.0)*2;
-
-printf("=======================\n");
-object_print(o);
-printf("Minx:%d Miny:%d Maxx:%d Maxy:%d\n",Minx,Miny,Maxx,Maxy);
-printf("PanX:%7.3f PanY:%7.3f Zoom:%7.3f ViewW:%d ViewH:%d\n",PanX,PanY,Zoom,View_width,View_height);
-printf("w:%7.3f h:%7.3f center:%7.3f,%7.3f\n",w,h,cx,cy);
-printf("x:%-7d y:%-7d xl:%7.3f yb:%7.3f\n",o->x1,o->y1,xl,yb);
-printf("x:%-7d y:%-7d xr:%7.3f yt:%7.3f\n",o->x2,o->y2,xr,yt);
-printf("\n");
-
-	vert[0]  = xr;	// X of top right
-	vert[1]  = yt;	// Y of top right
-	vert[2]  = 0;	// Z of top right (always zero?)
-	vert[3]  = 1.0;	// Texture X top right
-	vert[4]  = 1.0;	// Texture Y top right
-
-	vert[5]  = xr;	// X of bottom right
-	vert[6]  = yb;	// Y of bottom right
-	vert[7]  = 0;	// Z of bottom right (always zero?)
-	vert[8]  = 1.0;	// Texture X bottom right
-	vert[9]  = 0.0;	// Texture Y bottom right
-
-	vert[10] = xl;	// X of bottom left
-	vert[11] = yb;	// Y of bottom left
-	vert[12] = 0;	// Z of bottom left (always zero?)
-	vert[13] = 0.0;	// Texture X bottom left
-	vert[14] = 0.0;	// Texture Y bottom left
-
-	vert[15] = xl;	// X of top left
-	vert[16] = yt;	// Y of top left
-	vert[17] = 0;	// Z of top left (always zero?)
-	vert[18] = 0.0;	// Texture X top left
-	vert[19] = 1.0;	// Texture Y top left
-}
-
-static inline void
-must_glGenVertexArrays(const GLuint count, GLuint *out)
-{
-	glGenVertexArrays(count,out);
-	err_check("GenVertexArrays");
-}
-
-static inline void
-must_glBindVertexArray(GLuint idx)
-{
-	glBindVertexArray(idx);
-	err_check("BindVertexArray");
-}
-
-static inline void
-must_glGenBuffers(const GLuint count, GLuint *out)
-{
-	glGenBuffers(count,out);
-	err_check("GenBuffers");
-}
-
-static inline void
-must_glBindBuffer(const GLuint which, GLuint idx)
-{
-	glBindBuffer(which,idx);
-	err_check("BindBuffer");
-}
-
-static inline void
-must_glBufferData(const GLuint which, const size_t count, const void *buf, GLuint flag)
-{
-	glBufferData(which,count,buf,flag);
-	err_check("BufferData");
-}
-
-static inline void
-must_glVertexAttribPointer(const GLuint idx, const GLuint len, const GLuint type, const GLint flag, const GLuint width, const void *data)
-{
-	glVertexAttribPointer(idx,len,type,flag,width,data);
-	err_check("VertexAttribPointer");
+	glPolygonMode(which,arg);
+	err_check("PolygonMode");
 }
 
 static inline void
@@ -904,44 +642,65 @@ must_glGenerateMipmap(const GLuint which)
 	err_check("GenerateMipmap");
 }
 
+// load image from file
+// uses ImageMagick identify and convert
+static inline void
+image_load(object_t *o)
+{
+	FILE	*fp;
+	char	tmp[MAXBUF];
+	int	w=0,h=0;
+	int	img_bytes = 0;
+	uint8_t	*img;
+	uint8_t	*p;
+	size_t	nread;
+	int	remaining;
+
+	o->image = NULL;
+	sprintf(tmp,"identify -format \"%%w %%h\\n\" %s 2>/dev/null\n",o->text);
+	fp = popen(tmp,"r");
+	if( fp==NULL )
+		fatal("identify open image %s\n",o->text);
+	if( fgets(tmp,sizeof(tmp),fp) == NULL )
+		fatal("identify read image %s\n",o->text);
+	pclose(fp);
+	if( sscanf(tmp,"%d %d",&w,&h) != 2 )
+		fatal("identify scan image %s\n",o->text);
+	if( w<=0 || h<=0 )
+		fatal("invalid image size %s  w:%d h:%d" ,o->text,w,h);
+
+	img_bytes = w*h*3;
+	img = must_malloc(img_bytes);
+
+	// use ImageMagick to convert to raw RGB and also flip the image vertically
+	sprintf(tmp,"convert %s -size 3 -depth 8 -flip RGB:- 2>/dev/null",o->text);
+	fp = popen(tmp,"r");
+	for(p=img, remaining=img_bytes; remaining; remaining -= nread, p += nread){
+		nread = fread(p,1,remaining,fp);
+		if( nread == 0 )
+			break;
+		}
+	pclose(fp);
+	if( remaining != 0 )
+		fatal("read image %s, remaining:%d",o->text,remaining);
+
+	o->x2 = o->x1 + w;	// upper right corner
+	o->y2 = o->y1 + h;
+	o->x3 = w;		// keep actual image size here
+	o->y3 = h;
+	o->image = img;
+}
+
 // convert image bytes into a texture (must be called after glutInit and glutCreateWindow)
-// also setup various indices
 static inline void
 image_finalize (object_t *o)
 {
-	//	ul 3---0 ur
-	//	   |   |
-	//	ll 2---1 lr
-	float vert[4*5];	// 4 points, each has (XYZ position + XY texture)==5
-	unsigned int idx[] = { 0, 1, 3,   1, 2, 3, };	// 2 CW triangles to cover the rectangle
-
-	image_position(o,vert);	// set initial parameters
-
-	must_glGenVertexArrays (1, &o->vao);
-	must_glBindVertexArray (o->vao);
-	must_glGenBuffers (1, &o->vbo);
-	must_glBindBuffer (GL_ARRAY_BUFFER, o->vbo);
-	must_glBufferData (GL_ARRAY_BUFFER, sizeof (vert), vert, GL_STATIC_DRAW);
-	must_glGenBuffers (1, &o->ibo);
-	must_glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, o->ibo);
-	must_glBufferData (GL_ELEMENT_ARRAY_BUFFER, sizeof (idx), idx, GL_STATIC_DRAW);
-	must_glVertexAttribPointer (0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof (float), (void *) (0 * sizeof (float)));
-	must_glVertexAttribPointer (1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof (float), (void *) (3 * sizeof (float)));
-
 	must_glGenTextures(1, &o->texture);
 	must_glBindTexture(GL_TEXTURE_2D, o->texture);
-	//must_glPixelStorei(GL_UNPACK_SWAP_BYTES, GL_FALSE);
-	//must_glPixelStorei(GL_UNPACK_LSB_FIRST, GL_FALSE);
-	//must_glPixelStorei(GL_UNPACK_ROW_LENGTH, o->x3);		// w ??
-	//must_glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, o->y3);		// h ??
-	//must_glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
-	//must_glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
-	//must_glPixelStorei(GL_UNPACK_SKIP_IMAGES, 0);
-	//must_glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 	must_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 	must_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-	must_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);	// or GL_NEAREST
-	must_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);	// or GL_NEAREST
+	must_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+	must_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	must_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, o->x3, o->y3, 0, GL_RGB, GL_UNSIGNED_BYTE, o->image);
 	must_glGenerateMipmap(GL_TEXTURE_2D);
 	free(o->image);
@@ -1003,6 +762,8 @@ Init (FILE * fp)
 				o->x1 = xcoord(tokens[1]);
 				o->y1 = ycoord(tokens[2]);
 				o->radius = radius(tokens[3]);
+				o->x2 = o->x1 - o->radius;	o->y2 = o->y1 - o->radius;
+				o->x3 = o->x1 + o->radius;	o->y3 = o->y1 + o->radius;
 				}
 			else if (strcasecmp (tokens[0], "color") == 0) {
 				o = object_new (TYPE_COLOR, 0);
@@ -1014,7 +775,7 @@ Init (FILE * fp)
 				o = object_new (TYPE_IMAGE, cur_layer);
 				o->x1 = xcoord(tokens[1]);
 				o->y1 = ycoord(tokens[2]);
-				o->text = strsave(tokens[3]);	// use for filename
+				o->text = strsave(tokens[3]);	// filename
 				image_load(o);
 				}
 			break;
@@ -1042,6 +803,22 @@ Init (FILE * fp)
 				o->rotate = angle(tokens[3]);
 				o->scale = scale(tokens[4]);
 				o->text = strsave(tokens[5]);
+				w = strlen (o->text) * o->scale;
+				h = o->scale;
+				switch (o->rotate) {
+				case 0:
+					o->x2 = o->x1 + w; o->y2 = o->y1 + h;
+					break;
+				case 90:
+					o->x2 = o->x1 - h; o->y2 = o->y1 + w;
+					break;
+				case 180:
+					o->x2 = o->x1 - w; o->y2 = o->y1 - h;
+					break;
+				case 270:
+					o->x2 = o->x1 + h; o->y2 = o->y1 - w;
+					break;
+				}
 				}
 			else if (strcasecmp (tokens[0], "arc") == 0){
 				o = object_new (TYPE_ARC, cur_layer);
@@ -1050,6 +827,8 @@ Init (FILE * fp)
 				o->radius = radius(tokens[3]);
 				o->dstart = angle(tokens[4]);
 				o->ddelta = dangle(tokens[5]);
+				o->x2 = o->x1 - o->radius;	o->y2 = o->y1 - o->radius;
+				o->x3 = o->x1 + o->radius;	o->y3 = o->y1 + o->radius;
 				}
 			break;
 		case 7:
@@ -1078,44 +857,22 @@ Init (FILE * fp)
 		case TYPE_FILL:
 		case TYPE_WIDTH:
 			break;
+		case TYPE_POINT:
+			min_max_point (o->x1, o->y1);
+			break;
 		case TYPE_LINE:
 		case TYPE_RECT:
+		case TYPE_TEXT:
 		case TYPE_IMAGE:
 			min_max_point (o->x1, o->y1);
 			min_max_point (o->x2, o->y2);
 			break;
-		case TYPE_CIRCLE:
+		case TYPE_CIRCLE:	// 1=center, 2=ll, 3=ur
 		case TYPE_ARC:
-			min_max_point (o->x1 - o->radius, o->y1 - o->radius);
-			min_max_point (o->x1 + o->radius, o->y1 + o->radius);
-			break;
 		case TYPE_TRIANGLE:
 			min_max_point (o->x1, o->y1);
 			min_max_point (o->x2, o->y2);
 			min_max_point (o->x3, o->y3);
-			break;
-		case TYPE_POINT:
-			min_max_point (o->x1, o->y1);
-			break;
-		case TYPE_TEXT:
-			w = strlen (o->text) * o->scale;
-			h = o->scale;
-			switch (o->rotate) {
-			case 0:
-				o->x2 = o->x1 + w; o->y2 = o->y1 + h;
-				break;
-			case 90:
-				o->x2 = o->x1 - h; o->y2 = o->y1 + w;
-				break;
-			case 180:
-				o->x2 = o->x1 - w; o->y2 = o->y1 - h;
-				break;
-			case 270:
-				o->x2 = o->x1 + h; o->y2 = o->y1 - w;
-				break;
-			}
-			min_max_point (o->x1, o->y1);
-			min_max_point (o->x2, o->y2);
 			break;
 		}
 	}
@@ -1128,7 +885,7 @@ Init (FILE * fp)
 	Maxx += (Maxx - Minx) / 20;
 	Maxy += (Maxy - Miny) / 20;
 
-	// Add dimensions of the box
+	// Show dimensions of the box on layer zero
 	o = object_new(TYPE_TEXT,0);
 	sprintf(buf,"%d x %d",Maxx-Minx,Maxy-Miny);
 	o->rotate = 0;
@@ -1138,8 +895,8 @@ Init (FILE * fp)
 	o->y1 = Miny - (o->scale*2);
 	object_add_front (o);
 
-	// Add a border rectangle
-	o = object_new (TYPE_RECT, 0);	// layer 0 is always visible
+	// Show border rectangle on layer zero
+	o = object_new (TYPE_RECT, 0);	// layer zero info
 	o->x1 = Minx;
 	o->y1 = Miny;
 	o->x2 = Maxx;
@@ -1168,9 +925,10 @@ is_alt_pressed (void)
 }
 
 static inline void
-render_line (const object_t *o, const int z)
+render_line (const object_t *o)
 {
-	int w = Width/2;
+	const int w = Width/2;
+	const int z = ltoz(o->layer);
 
 	if (w <= 0) {
 		glBegin (GL_LINES);
@@ -1179,7 +937,7 @@ render_line (const object_t *o, const int z)
 		glEnd ();
 		return;
 	}
-	glPolygonMode (GL_FRONT_AND_BACK, GL_FILL);	// Lines are always filled
+	must_glPolygonMode (GL_FRONT_AND_BACK, GL_FILL);	// Lines are always filled
 	if ((o->x1 <= o->x2 && o->y1 == o->y2) || (o->x1 == o->x2 && o->y1 < o->y2)) {
 		glBegin (GL_POLYGON);
 		glVertex3i (o->x1 - w, o->y1 - w, z);
@@ -1210,12 +968,14 @@ render_line (const object_t *o, const int z)
 		glVertex3i (o->x1 + t2sina, o->y1 - t2cosa, z);
 		glEnd ();
 	}
-	glPolygonMode (GL_FRONT_AND_BACK, Fill ? GL_FILL : GL_LINE);
+	must_glPolygonMode (GL_FRONT_AND_BACK, Fill ? GL_FILL : GL_LINE);
 }
 
 static inline void
-render_rectangle (const object_t *o, const int z)
+render_rectangle (const object_t *o)
 {
+	const int z = ltoz(o->layer);
+
 	glBegin (GL_POLYGON);
 	glVertex3i (o->x1, o->y1, z);
 	glVertex3i (o->x2, o->y1, z);
@@ -1240,10 +1000,10 @@ stroke_output (const char *s)
 }
 
 static inline void
-render_text (const object_t *o, const int z )
+render_text (const object_t *o)
 {
 	glPushMatrix ();
-	glTranslatef ((float) o->x1, (float) o->y1, (float) z);
+	glTranslatef ((float) o->x1, (float) o->y1, (float) ltoz(o->layer));
 	glRotatef ((float) o->rotate, 0, 0, 1);
 	glScalef (MIN_TEXT_SCALE * o->scale, MIN_TEXT_SCALE * o->scale, MIN_TEXT_SCALE * o->scale);
 	stroke_output (o->text);	// alternate: bitmap_output()
@@ -1251,86 +1011,32 @@ render_text (const object_t *o, const int z )
 }
 
 static inline void
-view_print(const GLfloat *v)
+render_image (const object_t *o)
 {
-	unsigned int i;
-
-	printf("View:\n");
-	for(i=0;i<16;i++)
-		printf("%7.3f%c",v[i], (i%4)==3 ? '\n' : ' ');
-}
-
-static inline void
-must_glGetFloatv(const GLuint which, float *out)
-{
-	glGetFloatv(which,out);
-	err_check("GetFloatv");
-}
-
-static inline void
-view_snap(const char *tag)
-{
-	GLfloat	view[16];
-
-	must_glGetFloatv(GL_MODELVIEW_MATRIX,view);
-	printf("%s ",tag);
-	view_print(view);
-}
-
-static inline void
-must_glUseProgram(const GLuint sprog)
-{
-	glUseProgram(sprog);
-	err_check("UseProgram");
-}
-
-static inline void
-render_image (const object_t *o, const int z)
-{
-	float	vert[4*5];
-
-	(void)z;
+	const int z = ltoz(o->layer);
 
 	must_glBindTexture(GL_TEXTURE_2D, o->texture);
-	must_glUseProgram (ShaderProg);
-	must_glBindVertexArray (o->vao);
+	must_glEnable(GL_TEXTURE_2D);
+	must_glPolygonMode (GL_FRONT_AND_BACK, GL_FILL );
 
-	image_position(o,vert);	// set current parameters
-	must_glBufferData (GL_ARRAY_BUFFER, sizeof (vert), vert, GL_STATIC_DRAW);
-	glEnableVertexAttribArray (0);
-	glEnableVertexAttribArray (1);
-#if 0
-	must_glUniform1i (Sampler, 0);	// 0 == GL_TEXTURE0 + 0
+	glBegin(GL_TRIANGLES);
+	glTexCoord2f(0,0);	glVertex3i(o->x1,o->y1,z);	// lower right triangle
+	glTexCoord2f(1,0);	glVertex3i(o->x2,o->y1,z);
+	glTexCoord2f(0,1);	glVertex3i(o->x1,o->y2,z);
+	glTexCoord2f(1,0);	glVertex3i(o->x2,o->y1,z);	// upper left triangle
+	glTexCoord2f(0,1);	glVertex3i(o->x1,o->y2,z);
+	glTexCoord2f(1,1);	glVertex3i(o->x2,o->y2,z);
+	glEnd();
 
-	must_glActiveTexture(GL_TEXTURE0);
-	must_glBindBuffer (GL_ARRAY_BUFFER, o->vbo);
-	must_glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, o->ibo);
-
-	must_glGetFloatv(GL_MODELVIEW_MATRIX,view);
-	must_glUniformMatrix4fv (WVPLocation, 1, GL_FALSE, view);
-
-	must_glEnableVertexAttribArray (0);
-	must_glEnableVertexAttribArray (1);
-	must_glVertexAttribPointer (0, 3, GL_FLOAT, GL_FALSE, sizeof (float)*5, (const GLvoid *) (sizeof(float)*0));
-	must_glVertexAttribPointer (1, 2, GL_FLOAT, GL_FALSE, sizeof (float)*5, (const GLvoid *) (sizeof(float)*3));
-#endif
-
-	glPolygonMode (GL_FRONT_AND_BACK, GL_FILL );
-err_check("PolygonModeFill");
-	glDrawElements (GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-err_check("DrawElements");
-	glPolygonMode (GL_FRONT_AND_BACK, Fill ? GL_FILL : GL_LINE);
-err_check("PolygonModeRest");
-	glDisableVertexAttribArray (0);
-err_check("DisableVertexAttribArray0");
-	glDisableVertexAttribArray (1);
-err_check("DisableVertexAttribArray1");
-	must_glUseProgram (0);
+	must_glDisable(GL_TEXTURE_2D);
+	must_glPolygonMode (GL_FRONT_AND_BACK, Fill ? GL_FILL : GL_LINE);
 }
 
 static inline void
-render_triangle (const object_t *o, const int z)
+render_triangle (const object_t *o)
 {
+	const int z = ltoz(o->layer);
+
 	glBegin (GL_TRIANGLES);
 	glVertex3i (o->x1, o->y1, z);
 	glVertex3i (o->x2, o->y2, z);
@@ -1339,9 +1045,10 @@ render_triangle (const object_t *o, const int z)
 }
 
 static inline void
-render_circle (const object_t *o, const int z)
+render_circle (const object_t *o)
 {
 	double angle;
+	const int z = ltoz(o->layer);
 
 	glBegin (GL_POLYGON);
 	for (angle = 0; angle < TWO_PI; angle += (TWO_PI / CIRCLE_STEPS))
@@ -1350,7 +1057,7 @@ render_circle (const object_t *o, const int z)
 }
 
 static inline void
-render_arc (const object_t *o, const int z)
+render_arc (const object_t *o)
 {
 	double angle_start = dtor ((o->dstart - 90) % 360);
 	double angle_delta = dtor (o->ddelta);
@@ -1362,7 +1069,8 @@ render_arc (const object_t *o, const int z)
 	int arcy_inner[CIRCLE_STEPS + 1];
 	int step = 0;
 	int i;
-	int w = (Width >= 2) ? Width : 2;	// arcs of width <2 would be invisible
+	const int w = (Width >= 2) ? Width : 2;	// arcs of width <2 would be invisible
+	const int z = ltoz(o->layer);
 
 	if (angle_delta >= 0)
 		angle_end += angle_delta;
@@ -1383,7 +1091,7 @@ render_arc (const object_t *o, const int z)
 	if (step > 0 && arcx_outer[step] == arcx_outer[step - 1] && arcy_outer[step] == arcy_outer[step - 1])
 		step--;
 
-	glPolygonMode (GL_FRONT_AND_BACK, GL_FILL);	// arcs are always filled
+	must_glPolygonMode (GL_FRONT_AND_BACK, GL_FILL);	// arcs are always filled
 	for (i = 0; i < step; i++) {
 		glBegin (GL_POLYGON);
 		glVertex3i (o->x1 + arcx_outer[i + 0], o->y1 + arcy_outer[i + 0], z);
@@ -1392,7 +1100,7 @@ render_arc (const object_t *o, const int z)
 		glVertex3i (o->x1 + arcx_inner[i + 0], o->y1 + arcy_inner[i + 0], z);
 		glEnd ();
 	}
-	glPolygonMode (GL_FRONT_AND_BACK, Fill ? GL_FILL : GL_LINE);
+	must_glPolygonMode (GL_FRONT_AND_BACK, Fill ? GL_FILL : GL_LINE);
 }
 
 static inline void
@@ -1413,7 +1121,7 @@ static inline void
 render_fill(const object_t *o)
 {
 	Fill = o->fill;
-	glPolygonMode (GL_FRONT_AND_BACK, o->fill ? GL_FILL : GL_LINE);
+	must_glPolygonMode (GL_FRONT_AND_BACK, o->fill ? GL_FILL : GL_LINE);
 }
 
 // walk the object primitive list and put them into the display buffer
@@ -1421,7 +1129,6 @@ static void
 Render (void)
 {
 	object_t *o;
-	int z;
 
 	// set defaults
 	render_width(&Root);
@@ -1431,43 +1138,19 @@ Render (void)
 	OBJECT_WALK (o) {
 		if( !layer_visible(o) )	// NOTE: non-drawable object are all on layer 0 so they are always visible
 			continue;
-		z = ltoz(o->layer);
 		switch (o->type) {
-		case TYPE_NONE:
-			break;
-		case TYPE_LINE:
-			render_line (o, z);
-			break;
-		case TYPE_POINT:
-			render_circle (o, z);
-			break;
-		case TYPE_RECT:
-			render_rectangle (o, z);
-			break;
-		case TYPE_TEXT:
-			render_text (o, z);
-			break;
-		case TYPE_IMAGE:
-			render_image (o, z);
-			break;
-		case TYPE_TRIANGLE:
-			render_triangle (o, z);
-			break;
-		case TYPE_CIRCLE:
-			render_circle (o, z);
-			break;
-		case TYPE_ARC:
-			render_arc (o, z);
-			break;
-		case TYPE_COLOR:
-			render_color (o);
-			break;
-		case TYPE_WIDTH:
-			render_width(o);
-			break;
-		case TYPE_FILL:
-			render_fill(o);
-			break;
+		case TYPE_NONE:					break;
+		case TYPE_LINE:		render_line (o);	break;
+		case TYPE_POINT:	render_circle (o);	break;
+		case TYPE_RECT:		render_rectangle (o);	break;
+		case TYPE_TEXT:		render_text (o);	break;
+		case TYPE_IMAGE:	render_image (o);	break;
+		case TYPE_TRIANGLE:	render_triangle (o);	break;
+		case TYPE_CIRCLE:	render_circle (o);	break;
+		case TYPE_ARC:		render_arc (o);		break;
+		case TYPE_COLOR:	render_color (o);	break;
+		case TYPE_WIDTH:	render_width (o);	break;
+		case TYPE_FILL:		render_fill (o);	break;
 		}
 	}
 }
@@ -1477,7 +1160,6 @@ Motion (const int x, const int y)
 {
 	if (!Moveactive)
 		return;
-
 	PanX += (x - MoveX) / Zoom;
 	PanY += (MoveY - y) / Zoom;
 	MoveX = x;
@@ -1530,15 +1212,12 @@ Draw (void)
 	glPushMatrix ();
 	glMatrixMode (GL_PROJECTION);
 	glClearColor (0.0, 0.0, 0.0, 0.0);
-	glClear (GL_COLOR_BUFFER_BIT);
+	glClear (GL_COLOR_BUFFER_BIT);	// and maybe GL_DEPTH_BUFFER_BIT ?
 	glScalef (Zoom, Zoom, Zoom);
 	glTranslatef (PanX, PanY, 0.0);
 	glRotatef (RotX, 1, 0, 0);
 	glRotatef (RotY, 0, 1, 0);
 	glRotatef (RotZ, 0, 0, 1);
-	//glFrontFace (GL_CW);		// New, for image rendering
-	//glCullFace (GL_BACK);		// New, for image rendering
-	//glEnable (GL_CULL_FACE);	// New, for image rendering
 	Render ();
 	glPopMatrix ();
 	glutSwapBuffers ();
@@ -1677,15 +1356,11 @@ WindowSetup (void)
 	glutInitWindowSize (View_width, View_height);
 	glutCreateWindow (Title);
 
-	OBJECT_WALK (o) {	// finalize images
-		if( o->image != NULL ){
-			shader_init();
-			image_finalize(o);	// convert raw image bytes to vbo,ibo,texture form
-			//printf("Image:%s texture:%d, vbo:%d ibo:%d vao:%d\n",o->text,o->texture,o->vbo,o->ibo,o->vao);
-			}
+	OBJECT_WALK (o) {	// finalize the list
+		if( o->image != NULL )
+			image_finalize(o);	// convert raw image bytes to texture form
+		//object_print(o);		// DEBUG
 		}
-
-	//OBJECT_WALK (o) object_print(o);	// DEBUG
 }
 
 int
