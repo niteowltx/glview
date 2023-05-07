@@ -1056,16 +1056,17 @@ is_alt_pressed (void)
 static inline void
 render_line (const object_t *o, const int z)
 {
-	int w = (Width >= 2) ? Width/2 : 1;	// line width is half of Width but always at least 1
+	int w = Width/2;
 
-	glPolygonMode (GL_FRONT_AND_BACK, GL_FILL);	// Lines are always filled
 	if (w <= 0) {
 		glBegin (GL_LINES);
 		glVertex3i (o->x1, o->y1, z);
 		glVertex3i (o->x2, o->y2, z);
 		glEnd ();
+		return;
 	}
-	else if ((o->x1 <= o->x2 && o->y1 == o->y2) || (o->x1 == o->x2 && o->y1 < o->y2)) {
+	glPolygonMode (GL_FRONT_AND_BACK, GL_FILL);	// Lines are always filled
+	if ((o->x1 <= o->x2 && o->y1 == o->y2) || (o->x1 == o->x2 && o->y1 < o->y2)) {
 		glBegin (GL_POLYGON);
 		glVertex3i (o->x1 - w, o->y1 - w, z);
 		glVertex3i (o->x1 - w, o->y1 + w, z);
@@ -1425,9 +1426,9 @@ Draw (void)
 	glRotatef (RotX, 1, 0, 0);
 	glRotatef (RotY, 0, 1, 0);
 	glRotatef (RotZ, 0, 0, 1);
-	glFrontFace (GL_CW);		// New, for image rendering
-	glCullFace (GL_BACK);		// New, for image rendering
-	glEnable (GL_CULL_FACE);	// New, for image rendering
+	//glFrontFace (GL_CW);		// New, for image rendering
+	//glCullFace (GL_BACK);		// New, for image rendering
+	//glEnable (GL_CULL_FACE);	// New, for image rendering
 	Render ();
 	glPopMatrix ();
 	glutSwapBuffers ();
