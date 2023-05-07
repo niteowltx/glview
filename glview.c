@@ -388,7 +388,7 @@ object_print(const object_t *o)
 
 // --------------------------------------------------------------------
 
-// layer# to z depth
+// layer# to z depth (higher layer #'s block lower)
 static inline int
 ltoz(const int l)
 {

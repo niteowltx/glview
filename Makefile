@@ -14,6 +14,7 @@ test: ${TARGETS}
 	./tgen <words | ./glview
 	./glview <view.test
 	./hilbert | ./glview
+	./glview <image.test
 
 install: ${TARGETS}
 	cp ${TARGETS} ${BIN}
