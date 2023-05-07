@@ -827,6 +827,83 @@ printf("\n");
 	vert[19] = 1.0;	// Texture Y top left
 }
 
+static inline void
+must_glGenVertexArrays(const GLuint count, GLuint *out)
+{
+	glGenVertexArrays(count,out);
+	err_check("GenVertexArrays");
+}
+
+static inline void
+must_glBindVertexArray(GLuint idx)
+{
+	glBindVertexArray(idx);
+	err_check("BindVertexArray");
+}
+
+static inline void
+must_glGenBuffers(const GLuint count, GLuint *out)
+{
+	glGenBuffers(count,out);
+	err_check("GenBuffers");
+}
+
+static inline void
+must_glBindBuffer(const GLuint which, GLuint idx)
+{
+	glBindBuffer(which,idx);
+	err_check("BindBuffer");
+}
+
+static inline void
+must_glBufferData(const GLuint which, const size_t count, const void *buf, GLuint flag)
+{
+	glBufferData(which,count,buf,flag);
+	err_check("BufferData");
+}
+
+static inline void
+must_glVertexAttribPointer(const GLuint idx, const GLuint len, const GLuint type, const GLint flag, const GLuint width, const void *data)
+{
+	glVertexAttribPointer(idx,len,type,flag,width,data);
+	err_check("VertexAttribPointer");
+}
+
+static inline void
+must_glGenTextures(const GLuint count, GLuint *out)
+{
+	glGenTextures(count,out);
+	err_check("GenTextures");
+}
+
+static inline void
+must_glBindTexture(const GLuint which, const GLuint idx)
+{
+	glBindTexture(which,idx);
+	err_check("BindTexture");
+}
+
+static inline void
+must_glTexParameteri(const GLuint which, const GLuint flag, const GLuint arg)
+{
+	glTexParameteri(which,flag,arg);
+	err_check("TexParameteri");
+}
+
+static inline void
+must_glTexImage2D(const GLuint idx, const GLuint a, const GLuint b, const GLuint w, const GLuint h, const GLuint c, const GLuint d, const GLuint type, const void *data)
+{
+	glTexImage2D(idx,a,b,w,h,c,d,type,data);
+	err_check("TexImage2D");
+}
+
+static inline void
+must_glGenerateMipmap(const GLuint which)
+{
+	glGenerateMipmap(which);
+	err_check("GenerateMipmap");
+}
+
 // convert image bytes into a texture (must be called after glutInit and glutCreateWindow)
 // also setup various indices
 static inline void
@@ -840,52 +917,33 @@ image_finalize (object_t *o)
 
 	image_position(o,vert);	// set initial parameters
 
-	glGenVertexArrays (1, &o->vao);
-err_check("GenVao");
-	glBindVertexArray (o->vao);
-err_check("BindVao");
-	glGenBuffers (1, &o->vbo);
-err_check("GenVbo");
-	glBindBuffer (GL_ARRAY_BUFFER, o->vbo);
-err_check("BindVbo");
-	glBufferData (GL_ARRAY_BUFFER, sizeof (vert), vert, GL_STATIC_DRAW);
-err_check("BufferVbo");
-	glGenBuffers (1, &o->ibo);
-err_check("GenIbo");
-	glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, o->ibo);
-err_check("BindIbo");
-	glBufferData (GL_ELEMENT_ARRAY_BUFFER, sizeof (idx), idx, GL_STATIC_DRAW);
-err_check("BufferIbo");
-	glVertexAttribPointer (0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof (float), (void *) (0 * sizeof (float)));
-err_check("VertexAttrib0");
-	glVertexAttribPointer (1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof (float), (void *) (3 * sizeof (float)));
-err_check("VertexAttrib1");
+	must_glGenVertexArrays (1, &o->vao);
+	must_glBindVertexArray (o->vao);
+	must_glGenBuffers (1, &o->vbo);
+	must_glBindBuffer (GL_ARRAY_BUFFER, o->vbo);
+	must_glBufferData (GL_ARRAY_BUFFER, sizeof (vert), vert, GL_STATIC_DRAW);
+	must_glGenBuffers (1, &o->ibo);
+	must_glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, o->ibo);
+	must_glBufferData (GL_ELEMENT_ARRAY_BUFFER, sizeof (idx), idx, GL_STATIC_DRAW);
+	must_glVertexAttribPointer (0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof (float), (void *) (0 * sizeof (float)));
+	must_glVertexAttribPointer (1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof (float), (void *) (3 * sizeof (float)));
 
-	o->texture = ~0;
-	glGenTextures(1, &o->texture);
-err_check("GenTexture");
-	glBindTexture(GL_TEXTURE_2D, o->texture);
-err_check("BindTexture1");
-	//glPixelStorei(GL_UNPACK_SWAP_BYTES, GL_FALSE);
-	//glPixelStorei(GL_UNPACK_LSB_FIRST, GL_FALSE);
-	//glPixelStorei(GL_UNPACK_ROW_LENGTH, o->x3);		// w ??
-	//glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, o->y3);		// h ??
-	//glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
-	//glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
-	//glPixelStorei(GL_UNPACK_SKIP_IMAGES, 0);
-	//glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-err_check("TexParam1");
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-err_check("TexParam2");
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);	// or GL_NEAREST
-err_check("TexParam3");
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);	// or GL_NEAREST
-err_check("TexParam4");
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, o->x3, o->y3, 0, GL_RGB, GL_UNSIGNED_BYTE, o->image);
-err_check("TexImage2D");
-	glGenerateMipmap(GL_TEXTURE_2D);
-err_check("Mipmap");
+	must_glGenTextures(1, &o->texture);
+	must_glBindTexture(GL_TEXTURE_2D, o->texture);
+	//must_glPixelStorei(GL_UNPACK_SWAP_BYTES, GL_FALSE);
+	//must_glPixelStorei(GL_UNPACK_LSB_FIRST, GL_FALSE);
+	//must_glPixelStorei(GL_UNPACK_ROW_LENGTH, o->x3);		// w ??
+	//must_glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, o->y3);		// h ??
+	//must_glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+	//must_glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+	//must_glPixelStorei(GL_UNPACK_SKIP_IMAGES, 0);
+	//must_glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+	must_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	must_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	must_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);	// or GL_NEAREST
+	must_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);	// or GL_NEAREST
+	must_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, o->x3, o->y3, 0, GL_RGB, GL_UNSIGNED_BYTE, o->image);
+	must_glGenerateMipmap(GL_TEXTURE_2D);
 	free(o->image);
 	o->image = NULL;
 }
