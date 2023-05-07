@@ -1261,14 +1261,27 @@ view_print(const GLfloat *v)
 }
 
 static inline void
+must_glGetFloatv(const GLuint which, float *out)
+{
+	glGetFloatv(which,out);
+	err_check("GetFloatv");
+}
+
+static inline void
 view_snap(const char *tag)
 {
 	GLfloat	view[16];
 
-	glGetFloatv(GL_MODELVIEW_MATRIX,view);
-err_check("GetModelView");
+	must_glGetFloatv(GL_MODELVIEW_MATRIX,view);
 	printf("%s ",tag);
 	view_print(view);
+}
+
+static inline void
+must_glUseProgram(const GLuint sprog)
+{
+	glUseProgram(sprog);
+	err_check("UseProgram");
 }
 
 static inline void
@@ -1278,42 +1291,28 @@ render_image (const object_t *o, const int z)
 
 	(void)z;
 
-	glBindTexture(GL_TEXTURE_2D, o->texture);
-err_check("BindTexture");
-	glUseProgram (ShaderProg);
-err_check("UseProgram");
-	glBindVertexArray (o->vao);
-err_check("BindVertex");
+	must_glBindTexture(GL_TEXTURE_2D, o->texture);
+	must_glUseProgram (ShaderProg);
+	must_glBindVertexArray (o->vao);
 
 	image_position(o,vert);	// set current parameters
-	glBufferData (GL_ARRAY_BUFFER, sizeof (vert), vert, GL_STATIC_DRAW);
-err_check("BufferVbo");
+	must_glBufferData (GL_ARRAY_BUFFER, sizeof (vert), vert, GL_STATIC_DRAW);
 	glEnableVertexAttribArray (0);
 	glEnableVertexAttribArray (1);
 #if 0
-	glUniform1i (Sampler, 0);	// 0 == GL_TEXTURE0 + 0
-err_check("Uniform1i");
+	must_glUniform1i (Sampler, 0);	// 0 == GL_TEXTURE0 + 0
 
-	glActiveTexture(GL_TEXTURE0);
-err_check("ActiveTexture");
-	glBindBuffer (GL_ARRAY_BUFFER, o->vbo);
-err_check("BindVbo");
-	glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, o->ibo);
-err_check("BindIbo");
+	must_glActiveTexture(GL_TEXTURE0);
+	must_glBindBuffer (GL_ARRAY_BUFFER, o->vbo);
+	must_glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, o->ibo);
 
-	glGetFloatv(GL_MODELVIEW_MATRIX,view);
-err_check("GetModelView");
-	glUniformMatrix4fv (WVPLocation, 1, GL_FALSE, view);
-err_check("UniformMatrix4fv");
+	must_glGetFloatv(GL_MODELVIEW_MATRIX,view);
+	must_glUniformMatrix4fv (WVPLocation, 1, GL_FALSE, view);
 
-	glEnableVertexAttribArray (0);
-err_check("EnableVertexAttribArray0");
-	glEnableVertexAttribArray (1);
-err_check("EnableVertexAttribArray1");
-	glVertexAttribPointer (0, 3, GL_FLOAT, GL_FALSE, sizeof (float)*5, (const GLvoid *) (sizeof(float)*0));
-err_check("VertexAttribPointer0");
-	glVertexAttribPointer (1, 2, GL_FLOAT, GL_FALSE, sizeof (float)*5, (const GLvoid *) (sizeof(float)*3));
-err_check("VertexAttribPointer1");
+	must_glEnableVertexAttribArray (0);
+	must_glEnableVertexAttribArray (1);
+	must_glVertexAttribPointer (0, 3, GL_FLOAT, GL_FALSE, sizeof (float)*5, (const GLvoid *) (sizeof(float)*0));
+	must_glVertexAttribPointer (1, 2, GL_FLOAT, GL_FALSE, sizeof (float)*5, (const GLvoid *) (sizeof(float)*3));
 #endif
 
 	glPolygonMode (GL_FRONT_AND_BACK, GL_FILL );
@@ -1326,8 +1325,7 @@ err_check("PolygonModeRest");
 err_check("DisableVertexAttribArray0");
 	glDisableVertexAttribArray (1);
 err_check("DisableVertexAttribArray1");
-	glUseProgram (0);
-err_check("UseProgramDone");
+	must_glUseProgram (0);
 }
 
 static inline void
