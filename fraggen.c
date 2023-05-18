@@ -16,10 +16,11 @@ typedef struct frag{
 	unsigned long	len;
 } frag_t;
 
-#define	MAXFRAGS (1<<16)
+#define	MAXFRAGS (1<<16)	// number of fragments to show
+
 frag_t	Frags[MAXFRAGS];
 
-#define	FRAG_COUNT	1000000
+#define	FRAG_COUNT	1000000		// try to malloc this many times
 unsigned long int	Minfrag = 0;
 unsigned long int	Maxfrag = 19;
 
@@ -27,40 +28,32 @@ void	*Minaddr = (void *)~0;
 void	*Maxaddr = 0;
 
 static inline void
-frags_minmax()
+frag_minmax(const frag_t *f)
 {
-	unsigned int i;
-
-	for(i=0;i<MAXFRAGS;i++){
-		if( Frags[i].addr==NULL || Frags[i].len==0 )
-			continue;
-		if( Frags[i].addr < Minaddr ){
-			Minaddr = Frags[i].addr;
-			printf("# New Min:%llx Len:%lx\n",(unsigned long long int)Minaddr,Frags[i].len);
-			}
-		if( Frags[i].addr > Maxaddr ){
-			Maxaddr = Frags[i].addr;
-			printf("# New Max:%llx Len:%lx\n",(unsigned long long int)Maxaddr,Frags[i].len);
-			}
-		}
-	printf("# Min:%llx Max:%llx\n",(unsigned long long)Minaddr,(unsigned long long)Maxaddr);
+	if( f->addr==NULL || f->len==0 )
+		return;
+	if( f->addr < Minaddr )
+		Minaddr = f->addr;
+	if( f->addr > Maxaddr )
+		Maxaddr = f->addr;
 }
 
 static inline void
-frags_slot(const unsigned int i)
+frag_fill(frag_t *f)
 {
-	if(Frags[i].addr)	// replacing a previous allocation
-		free(Frags[i].addr);
+	if(f->addr)	// replacing a previous allocation
+		free(f->addr);
 
-	Frags[i].len = 1<<rnd_range(Minfrag,Maxfrag);
-	Frags[i].addr = must_malloc(Frags[i].len);
+	f->len = 1<<rnd_range(Minfrag,Maxfrag);
+	f->addr = must_malloc(f->len);
 }
 
+// print 'address len' pairs.  Subtract Minaddr from all addresses
 static inline void
-frags_print(const unsigned int i)
+frag_print(const frag_t *f)
 {
-	if( Frags[i].addr && Frags[i].len )
-		printf("%llx %lx\n",(unsigned long long int)Frags[i].addr-(unsigned long long int)Minaddr,Frags[i].len);
+	if( f->addr && f->len )
+		printf("%llx %lx\n",(unsigned long long int)f->addr-(unsigned long long int)Minaddr,f->len);
 }
 
 int
@@ -70,9 +63,11 @@ main(int argc, char **argv)
 
 	(void)argc; (void)argv;
 	for(i=0;i<FRAG_COUNT;i++)	// replace random slot
-		frags_slot(rnd(MAXFRAGS));
-	frags_minmax();
-	for(i=0;i<MAXFRAGS;i++)	// print all slots
-		frags_print(i);
+		frag_fill(&Frags[rnd(MAXFRAGS)]);
+	for(i=0;i<MAXFRAGS;i++)		// establish min/max
+		frag_minmax(&Frags[i]);
+	printf("# Minaddr:%llx Maxaddr:%llx Range:%llx\n",(unsigned long long)Minaddr,(unsigned long long)Maxaddr, (unsigned long long)(Maxaddr-Minaddr));
+	for(i=0;i<MAXFRAGS;i++)		// print all slots
+		frag_print(&Frags[i]);
 	return 0;
 }

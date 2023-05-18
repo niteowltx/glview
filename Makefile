@@ -8,6 +8,7 @@ BIN = ~/bin
 all:	${TARGETS}
 
 glview:		LDLIBS = -lglut -lGLU -lGL -lXext -lX11 -lm 
+glview:	glview.c util.h
 
 test: ${TARGETS}
 	./fraggen | ./hfrag | ./glview

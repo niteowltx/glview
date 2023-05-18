@@ -50,11 +50,11 @@ plot_hilbert (unsigned int order, int scale)
 	printf ("Layer %u\n", (order - MINORDER) + 1);
 	rnd_color ();
 	hilbert (0, order, &x1, &y1);
-	//printf("Text %d %d 0 %d %x\n",point(x1,scale),point(y1,scale),scale/8,0);
+	//printf("Text %d %d %x\n",point(x1,scale),point(y1,scale),0);
 	for (i = 1u; i < (1u << order) * (1u << order); i++) {
 		hilbert (i, order, &x2, &y2);
 		printf ("Line %d %d %d %d\n", point (x1, scale), point (y1, scale), point (x2, scale), point (y2, scale));
-		//printf("Text %d %d 0 %d %x\n",point(x2,scale),point(y2,scale),scale/8,i);
+		//printf("Text %d %d %x\n",point(x2,scale),point(y2,scale),i);
 		x1 = x2;
 		y1 = y2;
 	}
@@ -69,6 +69,7 @@ main (int argc, char **argv)
 	(void) argc;
 	(void) argv;
 	printf ("Width 1\n");
+	printf ("Scale %d\n",scale/8);
 	for (order = MINORDER; order <= MAXORDER; order++, scale >>= 1)
 		plot_hilbert (order, scale);
 	return 0;

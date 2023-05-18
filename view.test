@@ -23,10 +23,11 @@ Width 1
 
 Color 0 255 0
 Rectangle 10 10 50 50
-Text 50 10 0 1 A
-Text 50 20 0 1 B
-Text 50 30 0 1 C
-Text 50 40 0 1 D
+Scale 1
+Text 50 10 A
+Text 50 20 B
+Text 50 30 C
+Text 50 40 D
 
 Color 0 0 255
 Rectangle 100 100 150 150
@@ -39,7 +40,8 @@ Line 202 200 202 195
 Line 203 200 203 195
 Line 204 200 204 195
 Line 205 200 205 195
-Text 200 192 0 1 VerySmall
+Scale 1
+Text 200 192 VerySmall
 
 Color 255 255 255
 Line 0 0 100 100
@@ -48,22 +50,37 @@ Line 0 0 -300 300
 Line 0 0 -400 -400
 
 Color 255 255 0
-Text -50 -50 0   1 Rot0
-Text -50 -50 90  1 Rot90
-Text -50 -50 180 1 Rot180
-Text -50 -50 270 1 Rot270
+Scale 1
+Rotate 0
+Text -50 -50 Rot0
+Rotate 90
+Text -50 -50 Rot90
+Rotate 180
+Text -50 -50 Rot180
+Rotate 270
+Text -50 -50 Rot270
+Rotate 0
 
 Color 0 255 255
-Text -200 210 0 1 abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
-Text -200 200 0 1 Scale1---x---x---x---x---x---x---x---x---x
-Text -200 190 0 2 Scale2---------------------------
-Text -200 180 0 3 Scale3---------------------
-Text -200 170 0 4 Scale4----------------
-Text -200 160 0 5 Scale5--------
-Text -200 150 0 6 Scale6--------
-Text -200 140 0 7 Scale7--------
-Text -200 130 0 8 Scale8--------
-Text -200 120 0 9 Scale9--------
+Scale 1
+Text -200 210 abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
+Text -200 200 Scale1---x---x---x---x---x---x---x---x---x
+Scale 2
+Text -200 190 Scale2---------------------------
+Scale 3
+Text -200 180 Scale3---------------------
+Scale 4
+Text -200 170 Scale4----------------
+Scale 5
+Text -200 160 Scale5--------
+Scale 6
+Text -200 150 Scale6--------
+Scale 7
+Text -200 140 Scale7--------
+Scale 8
+Text -200 130 Scale8--------
+Scale 9
+Text -200 120 Scale9--------
 
 Width 1
 Line -200 210 -200 110
@@ -164,11 +181,13 @@ Line -201 120 -199 120
 Color 255 0 255
 Rectangle 110 -110 123 -124
 Line 123 -123 125 -123
-Text 123 -123 0 2 "Text with spaces"
+Scale 2
+Text 123 -123 "Text with spaces"
 Line 123 -121 125 -121
-Text 123 -121 0 2 "More Text with spaces"
+Text 123 -121 "More Text with spaces"
 Color 0 0 0
-Text 121 -120 0 1 Pin
+Scale 1
+Text 121 -120 Pin
 Line 123 -120 125 -120
 
 Color 100 200 100
@@ -183,10 +202,16 @@ Point -2500 -3500
 
 Color 200 100 0
 Width 1
-Text 0 0 0   300 WOW
-Text 0 0 90  300 Rotate
-Text 0 0 180 300 Upside
-Text 0 0 270 300 Down
+Scale 300
+Rotate 0
+Text 0 0 WOW
+Rotate 90
+Text 0 0 Rotate
+Rotate 180
+Text 0 0 Upside
+Rotate 270
+Text 0 0 Down
+Rotate 0
 
 Circle 50 50 50
 Circle 40 -40 40

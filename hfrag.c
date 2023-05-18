@@ -9,9 +9,14 @@
 #include "hilbert.h"
 #include "util.h"
 
+//
+//	plot pairs of (addr,len) in hilbert space
+//
+//	In Hilbert space, a range or addresses can be displayed as connected squares
+//
 #define	SCALE	32
-
-#define	ORDER	14	// total map size: (2^(ORDER*2) e.g. 13=64Mb
+#define	ORDER	14	// total map size: (1u<<(ORDER*2) e.g. 13=64Mb
+#define	MAXADDR	(1u<<(ORDER*2))
 
 int Layer_base = 1;
 
@@ -23,16 +28,31 @@ label_color()
 	printf("Color %d %d %d\n",(color>>16)&0xFF,(color>>8)&0xFF,color&0xFF);
 }
 
-static inline int
-maxorder(unsigned int v)
+// how many pairs of bits are set?
+static inline unsigned int
+maxorder(unsigned long int v)
 {
 	int order = 0;
 
+	if(v==0)fatal("%s zero",__FUNCTION__);
 	while(v){
 		order++;
 		v >>= 2;
 		}
 	return order-1;
+}
+
+// what is the maximum size square side length given addr and len
+// returned value is log2 of the len.
+static inline unsigned int
+square_order(const unsigned long int addr, const unsigned long int len)
+{
+	unsigned long int order = maxorder(len);	// start with maximum possible order based on length
+
+	// reduce order until it aligns with the given address
+	while( (addr % (1u<<(2*(order))))!=0 )
+		order--;
+	return order;
 }
 
 static inline void
@@ -42,17 +62,14 @@ draw_range(unsigned int addr, unsigned int len)
 	int order;
 
 	while(len){
-		for( order = maxorder(len); order >= 0; order-- ){
-			if( (addr % (1<<(2*order)))==0 )
-				break;
-			}
+		order = square_order(addr,len);
 		hilbert(addr,ORDER,&x,&y);
-		if( (x % (1<<order))==0 )	// returned point may be lower left or upper right
-			printf("Rectangle %d %d %d %d\n",x*SCALE,y*SCALE,(x+(1<<order))*SCALE,(y+(1<<order))*SCALE);
+		if( (x % (1u<<order))==0 )	// returned point may be lower left or upper right
+			printf("Rectangle %u %u %u %u\n",x*SCALE,y*SCALE,(x+(1u<<order))*SCALE,(y+(1<<order))*SCALE);
 		else
-			printf("Rectangle %d %d %d %d\n",(x-(1<<order)+1)*SCALE,(y-(1<<order)+1)*SCALE,(x+1)*SCALE,(y+1)*SCALE);
-		addr += 1<<(2*order);
-		len -= 1<<(2*order);
+			printf("Rectangle %u %u %u %u\n",(x-(1u<<order)+1)*SCALE,(y-(1u<<order)+1)*SCALE,(x+1)*SCALE,(y+1)*SCALE);
+		addr += 1u<<(2*order);
+		len -= 1u<<(2*order);
 		}
 }
 
@@ -62,14 +79,22 @@ draw_text(unsigned int addr, unsigned int len)
 	unsigned int x,y;
 
 	hilbert(addr,ORDER,&x,&y);
+	x *= SCALE;
+	x += SCALE/32;
+	y *= SCALE;
+	y += SCALE/32;
 
-	printf("Text %d %d 0 %d %x\n",    (x*SCALE)+(SCALE/32),(y*SCALE)+(SCALE/32)+(SCALE/4),SCALE/8,addr);
-	printf("Text %d %d 0 %d %x\n",    (x*SCALE)+(SCALE/32),(y*SCALE)+(SCALE/32)+(SCALE/8),SCALE/8,len);
+	printf("Text %d %d %x\n",    x,y+(SCALE/4),addr);
+	printf("Text %d %d %x\n",    x,y+(SCALE/8),len);
 }
 
 static inline void
 draw_area(unsigned int addr, unsigned int len)
 {
+	if( len==0 || len>=MAXADDR )return;
+	if( addr >= MAXADDR ) return;
+	if( (addr+len) >= MAXADDR ) return;
+
 	printf("Layer %d\n",Layer_base);
 	label_color();
 	draw_range(addr,len);
@@ -77,6 +102,7 @@ draw_area(unsigned int addr, unsigned int len)
 	printf("Layer %d\n",Layer_base+1);
 	printf("Color 255 255 255\n");
 	draw_text(addr,len);
+
 }
 
 void
@@ -102,6 +128,7 @@ int main(int argc,char **argv)
 	printf("Width 2\n");
 	printf("Point 0 0\n");
 	printf("Point %d %d\n",(1<<ORDER)*SCALE,(1<<ORDER)*SCALE);
+	printf("Scale %d\n",SCALE/8);
 	if( argc==1 )
 		gen_map(stdin);
 	else{
@@ -109,7 +136,7 @@ int main(int argc,char **argv)
 			fp = fopen(*++argv,"r");
 			gen_map(fp);
 			fclose(fp);
-			Layer_base += 3;
+			Layer_base += 2;
 			}
 		}
 	return 0;

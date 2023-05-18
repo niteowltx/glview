@@ -1,21 +1,9 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdarg.h>
-#include <ctype.h>
-#include <time.h>
-#include <values.h>
-#include <string.h>
-#include <unistd.h>
 #include <math.h>
-#include <sys/types.h>
-#include <sys/fcntl.h>
-#include <sys/mman.h>
+#include "util.h"
+
 #define GL_GLEXT_PROTOTYPES	// not the default?
 #include <GL/freeglut.h>	// if missing: apt-get install freeglut3-dev
-
-// Missing mouse defines?
+// Missing GLUT mouse defines?
 #define	GLUT_WHEEL_UP_BUTTON	3	// scroll wheel up
 #define	GLUT_WHEEL_DOWN_BUTTON	4	// scroll wheel down
 #define	GLUT_WHEEL_LEFT_BUTTON	5	// tilt scroll wheel to left
@@ -34,30 +22,29 @@
 //              Circle x1 y1 radius
 //              Arc x1 y1 radius start_angle delta_angle
 //              Triangle x1 y1 x2 y2 x3 y3
-//              Text x1 y1 angle scale "string"
+//              Text x1 y1 "string"
 //              Image x1 y1 "filename"
 //
+//              Layer n                 # Draw on layer n (n=1-12)
 //              Color cr cg cb          # 0-255 for each color
 //              Fill                    # Rectangle, Circle, Triangle are filled
 //              Wire                    # Rectangle, Circle, Triangle are wire-frame
 //              Width w                 # Line, Point, Arc, Text width is 'w' (min arc width is always 2)
-//              Layer n                 # Draw on layer n (n=1-12)
+//		Rotate angle		# Subsequent items are rotated by 'angle' (0, 90, 180, 270 only)
+//		Scale factor		# text and images are scaled up by this factor
 //
 //      coordinates (x1,y1) (x2,y2) (x3,y3) in signed int range (+/-2000000000)
-//      angle   degrees, for Text:
-//               0      left to right
-//               90     bottom to top
-//               180    right to left
-//               270    top to bottom
 //      scale           text scale factor (when scale=N each letter fills an NxN unit square) max=1000000
 //      start_angle     degree to start drawing arc
 //      delta_angle     number of degrees to draw (+ccw, -cw)
 //
 //      Starting defaults:
+//              Layer 1
 //              Color 255 255 255
 //              Wire
 //              Width 1
-//              Layer 1
+//		Rotate 0
+//		Scale 1
 //
 //      When running:
 //              click and drag to move the view
@@ -71,27 +58,23 @@
 //              PgUp/PgDn       Rotate Z (+Ctrl for finer change)
 //
 
-#define	MAXBUF		10240			// max input line length
-#define	MAXTOKENS	100			// max tokens on any line
-#define	MAXSTRING	1024			// max string length anywhere
-#define	STRSAVE_SIZE	(1<<20)			// pool alloc size, refill when it gets below MAXSTRING
-
-#define	LARGE		2000000000		// largest allowed coordinate value
+#define	LARGE		2000000000		// coordinates are limited to [-LARGE,+LARGE]
 #define	MIN_TEXT_SCALE	0.00954			// scale that makes text fill a 1x1 unit (1/104.76)
 #define	STROKE_FONT	GLUT_STROKE_MONO_ROMAN	// or GLUT_STROKE_ROMAN
 #define	BITMAP_FONT	GLUT_BITMAP_9_BY_15	// or TIMES_ROMAN_24, HELVETICA_18
 #define	ZOOM_MIN	0.0001
 #define	ZOOM_MAX	100.0
-#define	ZOOM_STEP	0.81
-#define	ZOOM_STEP_FINE	0.95
-#define	INIT_MAX_WIDTH	1024			// initial window max width
-#define	INIT_MAX_HEIGHT	1024			// initial window max height
-#define	ROT_STEP	(360.0/(double)64)	// image rotation increment
-#define	ROT_STEP_FINE	(ROT_STEP/4)		// image rotation increment fine
+#define	ZOOM_STEP	0.81			// gui zoom increment
+#define	ZOOM_STEP_FINE	0.95			// gui zoom increment fine
+#define	ROT_STEP	(360.0/(double)64)	// gui image rotation increment
+#define	ROT_STEP_FINE	(ROT_STEP/4)		// gui image rotation increment fine
+#define	INIT_MAX_WIDTH	1024			// gui initial window max width
+#define	INIT_MAX_HEIGHT	1024			// gui initial window max height
 #define	CIRCLE_STEPS	128			// number of line segments in a circle
 #define	TWO_PI		(M_PI*2)
 #define	MAX_LAYERS	12			// layer toggle mapped to keyboard F-keys
 #define	LAYER_SEP	100			// z-axis layer separation
+#define	MAX_POINTS	3			// max number of (x,y) points per object
 
 // Viewing controls
 double Zoom = 1.0;
@@ -122,11 +105,6 @@ int Maxx = -(LARGE - 1);
 int Maxy = -(LARGE - 1);
 int Minx = LARGE + 1;
 int Miny = LARGE + 1;
-int View_width = INIT_MAX_WIDTH;
-int View_height = INIT_MAX_HEIGHT;
-
-int Width = 1;			// current line/arc width
-bool Fill = false;		// current fill mode
 
 // Display object types
 typedef enum otype {
@@ -138,9 +116,6 @@ typedef enum otype {
 	TYPE_ARC,
 	TYPE_TRIANGLE,
 	TYPE_TEXT,
-	TYPE_COLOR,
-	TYPE_FILL,
-	TYPE_WIDTH,
 	TYPE_IMAGE,		//  x3,y3 hold image width,height
 } otype_t;
 
@@ -149,16 +124,18 @@ typedef struct object
 	struct object	*next;
 	struct object	*prev;
 	otype_t		type;
-	int		x1,y1,x2,y2,x3,y3;	// up to 3 points
+	int		x[MAX_POINTS];	// x,y for each point in object
+	int		y[MAX_POINTS];
 	int		cr,cg,cb;
 	int		layer;
+	int		z;		// layer converted to Z-axis value
 	int		width;
 	int		scale;
 	bool		fill;
 	int		rotate,radius,dstart,ddelta;
-	const char	*text;		// at most, a single text argument
-	uint8_t		*image;		// raw image bytes
-	GLuint		texture;	// image: as a texture object
+	const char	*text;		// text to display, filename when TYPE_IMAGE
+	uint8_t		*image;		// raw RGB image bytes
+	GLuint		texture;	// image converted to a texture object
 } object_t;
 
 object_t Root = {
@@ -169,6 +146,7 @@ object_t Root = {
 	.cg     = 255,
 	.cb     = 255,
 	.layer  = 0,
+	.z	= 0,
 	.width  = 1,
 	.scale  = 1,
 	.fill   = false,
@@ -179,139 +157,27 @@ object_t Root = {
 	.text   = "",
 };
 
-// Utilities --------------------------------------------------------------------
 
-// print error message and exit
-void
-fatal (char *format, ...)
-{
-	va_list args;
-
-	printf ("FATAL ERROR: ");
-	va_start (args, format);
-	vprintf (format, args);
-	va_end (args);
-	printf ("\n");
-	exit (1);
-}
-
-// print error message
-void
-error (char *format, ...)
-{
-	va_list args;
-
-	printf ("ERROR: ");
-	va_start (args, format);
-	vprintf (format, args);
-	va_end (args);
-	printf ("\n");
-}
-
-// malloc or die
-static inline void *
-must_malloc (const int size)
-{
-	void *vp = malloc (size);
-
-	if (vp == NULL)
-		fatal ("Can't malloc %d bytes", size);
-	return vp;
-}
-
-// zalloc or die
-static inline void *
-must_zalloc (const int size)
-{
-	void *vp = must_malloc (size);
-
-	memset (vp, 0, size);
-	return vp;
-}
-
-// A copy of the string is made in a malloc'ed area.  The return
-// pointer points to the copy.  The returned pointer CANNOT be
-// released via free().
-char *
-strsave (const char *s)
-{
-	char *p;
-	static int mleft = 0;
-	static char *sbuf = NULL;
-
-	if (mleft < (MAXSTRING + 1)) {
-		sbuf = (char *) must_malloc (STRSAVE_SIZE);
-		mleft = STRSAVE_SIZE;
-	}
-
-	p = sbuf;
-	if (sbuf == NULL || s == NULL)
-		return NULL;
-	while ((*sbuf++ = *s++) != 0);
-	mleft -= sbuf - p;
-	return p;
-}
-
-static inline char *
-skipwhite (char *s)
-{
-	while (*s) {
-		if (!isspace (*s))
-			break;
-		s++;
-	}
-	return s;
-}
-
-//
-// split string into argv[] style array of pointers
-//
-// Modifies 's' by inserting '\0'.  The tokens array will have a NULL
-// added at the end of the real tokens.
-int
-tokenize (char *s, char **tokens, int ntokens)
-{
-	char **itokens = tokens;
-
-	ntokens--;		// use one for NULL at end
-	s = skipwhite (s);
-	while (*s != '\n' && *s != '\0') {
-		if (s[0] == '/' && s[1] == '/')	// rest of line is comment
-			break;
-		if (--ntokens == 0)
-			break;	// way too many tokens on this line
-		if (*s == '"') {	// handle quoted string
-			s++;
-			*tokens++ = s;
-			while (*s != '\n' && *s != '"')
-				s++;
-		}
-		else {
-			*tokens++ = s;
-			while (!isspace (*s))
-				s++;
-		}
-		*s++ = '\0';
-		s = skipwhite (s);
-	}
-	*tokens = NULL;		// mark end of tokens
-	return tokens - itokens;
-}
-
-// Doubly linked lists --------------------------------------------------------------------
-
-// Walk every element in a list from the head, using o as the list item
+// Walk every object, using o as the list item
 #define	OBJECT_WALK(o)	for((o)=Root.next; (o) != (&Root); (o)=(o)->next)
 
+// create a new object of 'type' and initialize it from the passed default object
 static inline object_t *
-object_new (const int type, const int layer)
+object_new (const int type, const object_t *def)
 {
 	object_t *o = (object_t *)must_zalloc (sizeof (*o));
 
-	o->next = o->prev = o;
-	o->type = type;
-	o->layer = layer;
-	o->text = NULL;
+	o->next	= o->prev = o;
+	o->type		= type;
+	o->layer	= def->layer;
+	o->z		= def->z;
+	o->fill		= def->fill;
+	o->scale	= def->scale;
+	o->rotate	= def->rotate;
+	o->width	= def->width;
+	o->cr		= def->cr;
+	o->cg		= def->cg;
+	o->cb		= def->cb;
 	return o;
 }
 
@@ -326,12 +192,14 @@ object_add (object_t *a, object_t *b)
 	a->next = an->prev = b;
 }
 
+// add object to front of global list
 static inline void
 object_add_front (object_t *o)
 {
 	object_add(&Root, o);
 }
 
+// add object to end of global list
 static inline void
 object_add_end (object_t *o)
 {
@@ -339,37 +207,26 @@ object_add_end (object_t *o)
 }
 
 static inline void
-object_remove (object_t *o)
-{
-	o->next->prev = o->prev;
-	o->prev->next = o->next;
-}
-
-static inline char *
-object_type(const otype_t t)
-{
-	switch(t){
-	case TYPE_NONE:		return "NONE";
-	case TYPE_LINE:		return "LINE";
-	case TYPE_POINT:	return "POINT";
-	case TYPE_RECT:		return "RECT";
-	case TYPE_CIRCLE:	return "CIRCLE";
-	case TYPE_ARC:		return "ARC";
-	case TYPE_TRIANGLE:	return "TRIANGLE";
-	case TYPE_TEXT:		return "TEXT";
-	case TYPE_COLOR:	return "COLOR";
-	case TYPE_FILL:		return "FILL";
-	case TYPE_WIDTH:	return "WIDTH";
-	case TYPE_IMAGE:	return "IMAGE";
-	}
-	return "???";
-}
-
-static inline void
 object_print(const object_t *o)
 {
-	printf("%10s ",object_type(o->type));
-	printf("(%d,%d) (%d,%d) (%d,%d) ",o->x1,o->y1,o->x2,o->y2,o->x3,o->y3);
+	char *tname = "???";
+	unsigned int i;
+
+	switch(o->type){
+	case TYPE_NONE:		tname = "NONE"; break;
+	case TYPE_LINE:		tname = "LINE"; break;
+	case TYPE_POINT:	tname = "POINT"; break;
+	case TYPE_RECT:		tname = "RECT"; break;
+	case TYPE_CIRCLE:	tname = "CIRCLE"; break;
+	case TYPE_ARC:		tname = "ARC"; break;
+	case TYPE_TRIANGLE:	tname = "TRIANGLE"; break;
+	case TYPE_TEXT:		tname = "TEXT"; break;
+	case TYPE_IMAGE:	tname = "IMAGE"; break;
+	}
+
+	printf("%10s ",tname);
+	for(i=0;i<MAX_POINTS;i++)
+		printf("(%d,%d) ",o->x[i],o->y[i]);
 	if(o->cr)     printf("Red:%d ",o->cr);
 	if(o->cg)     printf("Grn:%d ",o->cg);
 	if(o->cb)     printf("Blu:%d ",o->cb);
@@ -381,12 +238,20 @@ object_print(const object_t *o)
 	if(o->radius) printf("Rad:%d ",o->radius);
 	if(o->dstart) printf("Dst:%d ",o->dstart);
 	if(o->ddelta) printf("Ddl:%d ",o->ddelta);
-	if(o->text)   printf("Txt:<%s> ",o->text);
+	if(o->text)   printf("<%s> ",o->text);
 	if(o->texture)printf("Ttr:%d ",o->texture);
 	printf("\n");
 }
 
-// --------------------------------------------------------------------
+// Set one of the the (x,y) points in an object
+static inline void
+object_set_xy(object_t *o, const unsigned int idx, const int x, const int y)
+{
+	if( idx >= MAX_POINTS )
+		fatal("%s idx:%d",__FUNCTION__, idx);
+	o->x[idx] = x;
+	o->y[idx] = y;
+}
 
 // layer# to z depth (higher layer #'s block lower)
 static inline int
@@ -456,6 +321,7 @@ set_rot (const int rotx, const int roty, const int rotz, const int x, const int 
 		RotZ = range360 (RotZ + rotz);
 }
 
+// force v to be in the range [minv,maxv]
 static inline int
 clamp (const int v, const int minv, const int maxv)
 {
@@ -466,16 +332,9 @@ clamp (const int v, const int minv, const int maxv)
 	return v;
 }
 
-// limit x coordinates to -LARGE,LARGE range
+// limit coordinates to -LARGE,LARGE range
 static inline int
-xcoord (const char *s)
-{
-	return clamp (atoi (s), -LARGE, LARGE);
-}
-
-// limit y coordinates to -LARGE,LARGE range
-static inline int
-ycoord (const char *s)
+coord (const char *s)
 {
 	return clamp (atoi (s), -LARGE, LARGE);
 }
@@ -551,6 +410,7 @@ layer_visible(const object_t *o)
 	return Layer[o->layer];
 }
 
+// check for OpenGL error conditions
 static inline void
 err_check(const char *tag)
 {
@@ -570,76 +430,6 @@ err_check(const char *tag)
 	}
 	
 	fatal("%s: %x %s\n",tag,err,s);
-}
-
-static inline void
-must_glGetFloatv(const GLuint which, float *out)
-{
-	glGetFloatv(which,out);
-	err_check("GetFloatv");
-}
-
-static inline void
-must_glUseProgram(const GLuint sprog)
-{
-	glUseProgram(sprog);
-	err_check("UseProgram");
-}
-
-static inline void
-must_glEnable(const GLuint feature)
-{
-	glEnable(feature);
-	err_check("Enable");
-}
-
-static inline void
-must_glDisable(const GLuint feature)
-{
-	glDisable(feature);
-	err_check("Disable");
-}
-
-static inline void
-must_glPolygonMode(const GLuint which, const GLuint arg)
-{
-	glPolygonMode(which,arg);
-	err_check("PolygonMode");
-}
-
-static inline void
-must_glGenTextures(const GLuint count, GLuint *out)
-{
-	glGenTextures(count,out);
-	err_check("GenTextures");
-}
-
-static inline void
-must_glBindTexture(const GLuint which, const GLuint idx)
-{
-	glBindTexture(which,idx);
-	err_check("BindTexture");
-}
-
-static inline void
-must_glTexParameteri(const GLuint which, const GLuint flag, const GLuint arg)
-{
-	glTexParameteri(which,flag,arg);
-	err_check("TexParameteri");
-}
-
-static inline void
-must_glTexImage2D(const GLuint idx, const GLuint a, const GLuint b, const GLuint w, const GLuint h, const GLuint c, const GLuint d, const GLuint type, const void *data)
-{
-	glTexImage2D(idx,a,b,w,h,c,d,type,data);
-	err_check("TexImage2D");
-}
-
-static inline void
-must_glGenerateMipmap(const GLuint which)
-{
-	glGenerateMipmap(which);
-	err_check("GenerateMipmap");
 }
 
 // load image from file
@@ -684,10 +474,7 @@ image_load(object_t *o)
 	if( remaining != 0 )
 		fatal("read image %s, remaining:%d",o->text,remaining);
 
-	o->x2 = o->x1 + w;	// upper right corner
-	o->y2 = o->y1 + h;
-	o->x3 = w;		// keep actual image size here
-	o->y3 = h;
+	object_set_xy(o,2,w,h);	// keep actual image size here
 	o->image = img;
 }
 
@@ -695,14 +482,14 @@ image_load(object_t *o)
 static inline void
 image_finalize (object_t *o)
 {
-	must_glGenTextures(1, &o->texture);
-	must_glBindTexture(GL_TEXTURE_2D, o->texture);
-	must_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-	must_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-	must_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-	must_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	must_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, o->x3, o->y3, 0, GL_RGB, GL_UNSIGNED_BYTE, o->image);
-	must_glGenerateMipmap(GL_TEXTURE_2D);
+	glGenTextures(1, &o->texture);
+	glBindTexture(GL_TEXTURE_2D, o->texture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, o->x[2], o->y[2], 0, GL_RGB, GL_UNSIGNED_BYTE, o->image);
+	glGenerateMipmap(GL_TEXTURE_2D);
 	free(o->image);
 	o->image = NULL;
 }
@@ -717,129 +504,140 @@ min_max_point (const int x, const int y)
 	if (y > Maxy) Maxy = y;
 }
 
-// read input file, build display object list
+// set x[1],y[1] for rectangular object at x[0],y[0]
+// object should have x[2] and y[2] set to the unscaled width and height of the object
 static inline void
-Init (FILE * fp)
+set_xy2(object_t *o)
 {
+	int sw  = o->x[2] * o->scale;		// apply scaling factor
+	int sh  = o->y[2] * o->scale;
+
+	switch (o->rotate) {
+	case 0:
+		object_set_xy(o,1,o->x[0]+sw,o->y[0]+sh);
+		break;
+	case 90:
+		object_set_xy(o,1,o->x[0]-sh,o->y[0]+sw);
+		break;
+	case 180:
+		object_set_xy(o,1,o->x[0]-sw,o->y[0]-sh);
+		break;
+	case 270:
+		object_set_xy(o,1,o->x[0]+sh,o->y[0]-sw);
+		break;
+	}
+}
+
+// read input file, add to object list
+static inline void
+object_scan (FILE * fp)
+{
+	object_t *o;
+	static object_t cur = {
+		.type = TYPE_NONE,
+		.layer = 1,
+		.cr = 255,
+		.cg = 255,
+		.cb = 255,
+		.rotate = 0,
+		.scale = 1,
+		.width = 1,
+		.fill = false,
+	};
 	char buf[MAXBUF];
 	char *tokens[MAXTOKENS];
-	object_t *o;
-	int w, h;
-	int cur_layer = 1;
 
 	while (fgets (buf, sizeof (buf), fp) != NULL) {
 		o = NULL;
-		switch (tokenize (buf, tokens, MAXTOKENS)) {
+		switch( tokenize (buf, tokens, MAXTOKENS) ){
 		case 1:
 			if (strcasecmp (tokens[0], "fill") == 0){
-				o = object_new (TYPE_FILL, 0);
-				o->fill = true;
+				cur.fill = true;
 				}
 			else if (strcasecmp (tokens[0], "wire") == 0){
-				o = object_new (TYPE_FILL, 0);
-				o->fill = false;
+				cur.fill = false;
 				}
 			break;
 		case 2:
 			if (strcasecmp (tokens[0], "width") == 0) {
-				o = object_new (TYPE_WIDTH, 0);
-				o->width = scale(tokens[1]);
+				cur.width = scale(tokens[1]);
 				}
 			else if (strcasecmp (tokens[0], "layer") == 0) {
-				cur_layer = layer (tokens[1]);
+				cur.layer = layer (tokens[1]);
+				}
+			else if (strcasecmp (tokens[0], "rotate") == 0) {
+				cur.rotate = angle (tokens[1]);
+				}
+			else if (strcasecmp (tokens[0], "scale") == 0) {
+				cur.scale = scale (tokens[1]);
 				}
 			break;
 		case 3:
 			if (strcasecmp (tokens[0], "point") == 0){
-				o = object_new (TYPE_POINT, cur_layer);
-				o->x1 = xcoord(tokens[1]);
-				o->y1 = ycoord(tokens[2]);
+				o = object_new (TYPE_POINT, &cur);
+				object_set_xy(o,0,coord(tokens[1]),coord(tokens[2]));
 				}
 			break;
 		case 4:
 			if (strcasecmp (tokens[0], "circle") == 0){
-				o = object_new (TYPE_CIRCLE, cur_layer);
-				o->x1 = xcoord(tokens[1]);
-				o->y1 = ycoord(tokens[2]);
+				o = object_new (TYPE_CIRCLE, &cur);
+				object_set_xy(o,0,coord(tokens[1]),coord(tokens[2]));
 				o->radius = radius(tokens[3]);
-				o->x2 = o->x1 - o->radius;	o->y2 = o->y1 - o->radius;
-				o->x3 = o->x1 + o->radius;	o->y3 = o->y1 + o->radius;
+				object_set_xy(o,1,o->x[0] - o->radius, o->y[0] - o->radius);	// lower left of bounding square
+				object_set_xy(o,2,o->x[0] + o->radius, o->y[0] + o->radius);	// upper right of bounding square
 				}
 			else if (strcasecmp (tokens[0], "color") == 0) {
-				o = object_new (TYPE_COLOR, 0);
-				o->cr = color(tokens[1]);
-				o->cg = color(tokens[2]);
-				o->cb = color(tokens[3]);
+				cur.cr = color(tokens[1]);
+				cur.cg = color(tokens[2]);
+				cur.cb = color(tokens[3]);
 				}
 			else if (strcasecmp (tokens[0], "image") == 0){
-				o = object_new (TYPE_IMAGE, cur_layer);
-				o->x1 = xcoord(tokens[1]);
-				o->y1 = ycoord(tokens[2]);
-				o->text = strsave(tokens[3]);	// filename
-				image_load(o);
+				o = object_new (TYPE_IMAGE, &cur);
+				o->fill = true;			// images are always filled
+				object_set_xy(o,0,coord(tokens[1]),coord(tokens[2]));
+				o->text = strdup(tokens[3]);	// filename
+				image_load(o);			// sets x[2] and y[2] to width, height of image
+				set_xy2(o);
+				}
+			else if (strcasecmp (tokens[0], "text") == 0){
+				o = object_new (TYPE_TEXT, &cur);
+				object_set_xy(o,0,coord(tokens[1]),coord(tokens[2]));
+				o->text = strdup(tokens[3]);
+				object_set_xy(o,2,strlen(o->text),1);
+				set_xy2(o);
 				}
 			break;
 		case 5:
 			if (strcasecmp (tokens[0], "rectangle") == 0){
-				o = object_new (TYPE_RECT, cur_layer);
-				o->x1 = xcoord(tokens[1]);
-				o->y1 = ycoord(tokens[2]);
-				o->x2 = xcoord(tokens[3]);
-				o->y2 = ycoord(tokens[4]);
+				o = object_new (TYPE_RECT, &cur);
+				object_set_xy(o,0,coord(tokens[1]),coord(tokens[2]));
+				object_set_xy(o,1,coord(tokens[3]),coord(tokens[4]));
 				}
 			else if (strcasecmp (tokens[0], "line") == 0){
-				o = object_new (TYPE_LINE, cur_layer);
-				o->x1 = xcoord(tokens[1]);
-				o->y1 = ycoord(tokens[2]);
-				o->x2 = xcoord(tokens[3]);
-				o->y2 = ycoord(tokens[4]);
+				o = object_new (TYPE_LINE, &cur);
+				o->fill = true;			// lines are always filled
+				object_set_xy(o,0,coord(tokens[1]),coord(tokens[2]));
+				object_set_xy(o,1,coord(tokens[3]),coord(tokens[4]));
 				}
 			break;
 		case 6:
-			if (strcasecmp (tokens[0], "text") == 0){
-				o = object_new (TYPE_TEXT, cur_layer);
-				o->x1 = xcoord(tokens[1]);
-				o->y1 = ycoord(tokens[2]);
-				o->rotate = angle(tokens[3]);
-				o->scale = scale(tokens[4]);
-				o->text = strsave(tokens[5]);
-				w = strlen (o->text) * o->scale;
-				h = o->scale;
-				switch (o->rotate) {
-				case 0:
-					o->x2 = o->x1 + w; o->y2 = o->y1 + h;
-					break;
-				case 90:
-					o->x2 = o->x1 - h; o->y2 = o->y1 + w;
-					break;
-				case 180:
-					o->x2 = o->x1 - w; o->y2 = o->y1 - h;
-					break;
-				case 270:
-					o->x2 = o->x1 + h; o->y2 = o->y1 - w;
-					break;
-				}
-				}
-			else if (strcasecmp (tokens[0], "arc") == 0){
-				o = object_new (TYPE_ARC, cur_layer);
-				o->x1 = xcoord(tokens[1]);
-				o->y1 = ycoord(tokens[2]);
+			if (strcasecmp (tokens[0], "arc") == 0){
+				o = object_new (TYPE_ARC, &cur);
+				o->fill = true;		// arcs are always filled
+				object_set_xy(o,0,coord(tokens[1]),coord(tokens[2]));
 				o->radius = radius(tokens[3]);
 				o->dstart = angle(tokens[4]);
 				o->ddelta = dangle(tokens[5]);
-				o->x2 = o->x1 - o->radius;	o->y2 = o->y1 - o->radius;
-				o->x3 = o->x1 + o->radius;	o->y3 = o->y1 + o->radius;
+				object_set_xy(o,1,o->x[0] - o->radius, o->y[0] - o->radius);	// lower left of bounding square
+				object_set_xy(o,2,o->x[0] + o->radius, o->y[0] + o->radius);	// upper right of bounding square
 				}
 			break;
 		case 7:
 			if (strcasecmp (tokens[0], "triangle") == 0){
-				o = object_new (TYPE_TRIANGLE, cur_layer);
-				o->x1 = xcoord(tokens[1]);
-				o->y1 = ycoord(tokens[2]);
-				o->x2 = xcoord(tokens[3]);
-				o->y2 = ycoord(tokens[4]);
-				o->x3 = xcoord(tokens[5]);
-				o->y3 = ycoord(tokens[6]);
+				o = object_new (TYPE_TRIANGLE, &cur);
+				object_set_xy(o,0,coord(tokens[1]),coord(tokens[2]));
+				object_set_xy(o,1,coord(tokens[3]),coord(tokens[4]));
+				object_set_xy(o,2,coord(tokens[5]),coord(tokens[6]));
 				}
 			break;
 		default:
@@ -848,36 +646,55 @@ Init (FILE * fp)
 		if (o != NULL)
 			object_add_end (o);
 	}
+}
+
+// finalize objects
+static inline void
+object_wrapup()
+{
+	object_t *o;
+	object_t cur = {
+		.layer = 0,	// NOTE: objects drawn on layer 0 are always visible
+		.z = ltoz(0),
+		.cr = 255,
+		.cg = 255,
+		.cb = 255,
+		.rotate = 0,
+		.scale = 1,
+		.width = 1,
+		.fill = false,
+	};
+	char buf[MAXBUF];
 
 	// find bounding rectangle for all primitives
 	OBJECT_WALK (o) {
+		o->z = ltoz(o->layer);
 		switch (o->type) {
 		case TYPE_NONE:
-		case TYPE_COLOR:
-		case TYPE_FILL:
-		case TYPE_WIDTH:
 			break;
 		case TYPE_POINT:
-			min_max_point (o->x1, o->y1);
+			min_max_point (o->x[0], o->y[0]);
 			break;
 		case TYPE_LINE:
 		case TYPE_RECT:
 		case TYPE_TEXT:
 		case TYPE_IMAGE:
-			min_max_point (o->x1, o->y1);
-			min_max_point (o->x2, o->y2);
+			min_max_point (o->x[0], o->y[0]);
+			min_max_point (o->x[1], o->y[1]);
 			break;
 		case TYPE_CIRCLE:	// 1=center, 2=ll, 3=ur
 		case TYPE_ARC:
 		case TYPE_TRIANGLE:
-			min_max_point (o->x1, o->y1);
-			min_max_point (o->x2, o->y2);
-			min_max_point (o->x3, o->y3);
+			min_max_point (o->x[0], o->y[0]);
+			min_max_point (o->x[1], o->y[1]);
+			min_max_point (o->x[2], o->y[2]);
 			break;
 		}
 	}
-	if (Maxx < Minx || Maxy < Miny)
+	if (Maxx < Minx || Maxy < Miny){
+		printf("Empty display list\n");
 		exit (0);	// nothing to draw
+	}
 
 	// Increase boundary by 10%
 	Minx -= (Maxx - Minx) / 20;
@@ -886,21 +703,17 @@ Init (FILE * fp)
 	Maxy += (Maxy - Miny) / 20;
 
 	// Show dimensions of the box on layer zero
-	o = object_new(TYPE_TEXT,0);
+	o = object_new(TYPE_TEXT,&cur);
 	sprintf(buf,"%d x %d",Maxx-Minx,Maxy-Miny);
-	o->rotate = 0;
 	o->scale = clamp((Maxx-Minx)/50, 10, 10000);
-	o->text = strsave(buf);
-	o->x1 = Minx;
-	o->y1 = Miny - (o->scale*2);
+	o->text = strdup(buf);
+	object_set_xy(o,0,Minx,Miny-(o->scale*2));
 	object_add_front (o);
 
 	// Show border rectangle on layer zero
-	o = object_new (TYPE_RECT, 0);	// layer zero info
-	o->x1 = Minx;
-	o->y1 = Miny;
-	o->x2 = Maxx;
-	o->y2 = Maxy;
+	o = object_new (TYPE_RECT, &cur);
+	object_set_xy(o,0,Minx,Miny);
+	object_set_xy(o,1,Maxx,Maxy);
 	object_add_front (o);
 
 	all_layers(true);
@@ -927,60 +740,55 @@ is_alt_pressed (void)
 static inline void
 render_line (const object_t *o)
 {
-	const int w = Width/2;
-	const int z = ltoz(o->layer);
+	const int w = o->width/2;
 
 	if (w <= 0) {
 		glBegin (GL_LINES);
-		glVertex3i (o->x1, o->y1, z);
-		glVertex3i (o->x2, o->y2, z);
+		glVertex3i (o->x[0], o->y[0], o->z);
+		glVertex3i (o->x[1], o->y[1], o->z);
 		glEnd ();
 		return;
 	}
-	must_glPolygonMode (GL_FRONT_AND_BACK, GL_FILL);	// Lines are always filled
-	if ((o->x1 <= o->x2 && o->y1 == o->y2) || (o->x1 == o->x2 && o->y1 < o->y2)) {
+	if ((o->x[0] <= o->x[1] && o->y[0] == o->y[1]) || (o->x[0] == o->x[1] && o->y[0] < o->y[1])) {
 		glBegin (GL_POLYGON);
-		glVertex3i (o->x1 - w, o->y1 - w, z);
-		glVertex3i (o->x1 - w, o->y1 + w, z);
-		glVertex3i (o->x2 + w, o->y2 + w, z);
-		glVertex3i (o->x2 + w, o->y2 - w, z);
+		glVertex3i (o->x[0] - w, o->y[0] - w, o->z);
+		glVertex3i (o->x[0] - w, o->y[0] + w, o->z);
+		glVertex3i (o->x[1] + w, o->y[1] + w, o->z);
+		glVertex3i (o->x[1] + w, o->y[1] - w, o->z);
 		glEnd ();
 	}
-	else if ((o->x1 > o->x2 && o->y1 == o->y2) || (o->x1 == o->x2 && o->y1 > o->y2)) {
+	else if ((o->x[0] > o->x[1] && o->y[0] == o->y[1]) || (o->x[0] == o->x[1] && o->y[0] > o->y[1])) {
 		glBegin (GL_POLYGON);
-		glVertex3i (o->x2 - w, o->y2 - w, z);
-		glVertex3i (o->x2 - w, o->y2 + w, z);
-		glVertex3i (o->x1 + w, o->y1 + w, z);
-		glVertex3i (o->x1 + w, o->y1 - w, z);
+		glVertex3i (o->x[1] - w, o->y[1] - w, o->z);
+		glVertex3i (o->x[1] - w, o->y[1] + w, o->z);
+		glVertex3i (o->x[0] + w, o->y[0] + w, o->z);
+		glVertex3i (o->x[0] + w, o->y[0] - w, o->z);
 		glEnd ();
 	}
 	else {
-		double angle = atan2 ((double) (o->y2 - o->y1), (double) (o->x2 - o->x1));
+		double angle = atan2 ((double) (o->y[1] - o->y[0]), (double) (o->x[1] - o->x[0]));
 		int t2sina = (int) (w * sin (angle));
 		int t2cosa = (int) (w * cos (angle));
 
 		glBegin (GL_TRIANGLES);
-		glVertex3i (o->x1 + t2sina, o->y1 - t2cosa, z);
-		glVertex3i (o->x2 + t2sina, o->y2 - t2cosa, z);
-		glVertex3i (o->x2 - t2sina, o->y2 + t2cosa, z);
-		glVertex3i (o->x2 - t2sina, o->y2 + t2cosa, z);
-		glVertex3i (o->x1 - t2sina, o->y1 + t2cosa, z);
-		glVertex3i (o->x1 + t2sina, o->y1 - t2cosa, z);
+		glVertex3i (o->x[0] + t2sina, o->y[0] - t2cosa, o->z);
+		glVertex3i (o->x[1] + t2sina, o->y[1] - t2cosa, o->z);
+		glVertex3i (o->x[1] - t2sina, o->y[1] + t2cosa, o->z);
+		glVertex3i (o->x[1] - t2sina, o->y[1] + t2cosa, o->z);
+		glVertex3i (o->x[0] - t2sina, o->y[0] + t2cosa, o->z);
+		glVertex3i (o->x[0] + t2sina, o->y[0] - t2cosa, o->z);
 		glEnd ();
 	}
-	must_glPolygonMode (GL_FRONT_AND_BACK, Fill ? GL_FILL : GL_LINE);
 }
 
 static inline void
 render_rectangle (const object_t *o)
 {
-	const int z = ltoz(o->layer);
-
 	glBegin (GL_POLYGON);
-	glVertex3i (o->x1, o->y1, z);
-	glVertex3i (o->x2, o->y1, z);
-	glVertex3i (o->x2, o->y2, z);
-	glVertex3i (o->x1, o->y2, z);
+	glVertex3i (o->x[0], o->y[0], o->z);
+	glVertex3i (o->x[1], o->y[0], o->z);
+	glVertex3i (o->x[1], o->y[1], o->z);
+	glVertex3i (o->x[0], o->y[1], o->z);
 	glEnd ();
 }
 
@@ -1003,8 +811,7 @@ static inline void
 render_text (const object_t *o)
 {
 	glPushMatrix ();
-	glTranslatef ((float) o->x1, (float) o->y1, (float) ltoz(o->layer));
-	glRotatef ((float) o->rotate, 0, 0, 1);
+	glTranslatef ((float) o->x[0], (float) o->y[0], (float) o->z);
 	glScalef (MIN_TEXT_SCALE * o->scale, MIN_TEXT_SCALE * o->scale, MIN_TEXT_SCALE * o->scale);
 	stroke_output (o->text);	// alternate: bitmap_output()
 	glPopMatrix ();
@@ -1013,34 +820,69 @@ render_text (const object_t *o)
 static inline void
 render_image (const object_t *o)
 {
-	const int z = ltoz(o->layer);
-
-	must_glBindTexture(GL_TEXTURE_2D, o->texture);
-	must_glEnable(GL_TEXTURE_2D);
-	must_glPolygonMode (GL_FRONT_AND_BACK, GL_FILL );
+	glPushMatrix ();
+	glBindTexture(GL_TEXTURE_2D, o->texture);
+	glEnable(GL_TEXTURE_2D);
+//	glRotatef (o->rotate, 0, 0, 1);
+//	glTranslatef ((float) o->x[0], (float) o->y[0], (float) o->z);
 
 	glBegin(GL_TRIANGLES);
-	glTexCoord2f(0,0);	glVertex3i(o->x1,o->y1,z);	// lower right triangle
-	glTexCoord2f(1,0);	glVertex3i(o->x2,o->y1,z);
-	glTexCoord2f(0,1);	glVertex3i(o->x1,o->y2,z);
-	glTexCoord2f(1,0);	glVertex3i(o->x2,o->y1,z);	// upper left triangle
-	glTexCoord2f(0,1);	glVertex3i(o->x1,o->y2,z);
-	glTexCoord2f(1,1);	glVertex3i(o->x2,o->y2,z);
+	glTexCoord2f(0,0);	glVertex3i(o->x[0],o->y[0],o->z);	// lower right triangle
+	glTexCoord2f(1,0);	glVertex3i(o->x[1],o->y[0],o->z);
+	glTexCoord2f(0,1);	glVertex3i(o->x[0],o->y[1],o->z);
+	glTexCoord2f(1,0);	glVertex3i(o->x[1],o->y[0],o->z);	// upper left triangle
+	glTexCoord2f(1,1);	glVertex3i(o->x[1],o->y[1],o->z);
+	glTexCoord2f(0,1);	glVertex3i(o->x[0],o->y[1],o->z);
+
+#if 0
+	switch(o->rotate){
+	case 0:
+		glTexCoord2f(0,0);	glVertex3i(o->x[0],o->y[0],o->z);	// lower right triangle
+		glTexCoord2f(1,0);	glVertex3i(o->x[1],o->y[0],o->z);
+		glTexCoord2f(0,1);	glVertex3i(o->x[0],o->y[1],o->z);
+		glTexCoord2f(1,0);	glVertex3i(o->x[1],o->y[0],o->z);	// upper left triangle
+		glTexCoord2f(1,1);	glVertex3i(o->x[1],o->y[1],o->z);
+		glTexCoord2f(0,1);	glVertex3i(o->x[0],o->y[1],o->z);
+		break;
+	case 90:
+		glTexCoord2f(0,0);	glVertex3i(o->x[0],o->y[0],o->z);	// lower right triangle
+		glTexCoord2f(1,0);	glVertex3i(o->x[0],o->y[1],o->z);
+		glTexCoord2f(0,1);	glVertex3i(o->x[1],o->y[0],o->z);
+		glTexCoord2f(1,0);	glVertex3i(o->x[0],o->y[1],o->z);	// upper left triangle
+		glTexCoord2f(1,1);	glVertex3i(o->x[1],o->y[1],o->z);
+		glTexCoord2f(0,1);	glVertex3i(o->x[1],o->y[0],o->z);
+		break;
+	case 180:
+		glTexCoord2f(0,0);	glVertex3i(o->x[0],o->y[0],o->z);	// lower right triangle
+		glTexCoord2f(1,0);	glVertex3i(o->x[1],o->y[0],o->z);
+		glTexCoord2f(0,1);	glVertex3i(o->x[0],o->y[1],o->z);
+		glTexCoord2f(1,0);	glVertex3i(o->x[1],o->y[0],o->z);	// upper left triangle
+		glTexCoord2f(1,1);	glVertex3i(o->x[1],o->y[1],o->z);
+		glTexCoord2f(0,1);	glVertex3i(o->x[0],o->y[1],o->z);
+		break;
+	case 270:
+		glTexCoord2f(0,0);	glVertex3i(o->x[0],o->y[0],o->z);	// lower right triangle
+		glTexCoord2f(1,0);	glVertex3i(o->x[1],o->y[0],o->z);
+		glTexCoord2f(0,1);	glVertex3i(o->x[0],o->y[1],o->z);
+		glTexCoord2f(1,0);	glVertex3i(o->x[1],o->y[0],o->z);	// upper left triangle
+		glTexCoord2f(1,1);	glVertex3i(o->x[1],o->y[1],o->z);
+		glTexCoord2f(0,1);	glVertex3i(o->x[0],o->y[1],o->z);
+		break;
+	}
+#endif
 	glEnd();
 
-	must_glDisable(GL_TEXTURE_2D);
-	must_glPolygonMode (GL_FRONT_AND_BACK, Fill ? GL_FILL : GL_LINE);
+	glDisable(GL_TEXTURE_2D);
+	glPopMatrix ();
 }
 
 static inline void
 render_triangle (const object_t *o)
 {
-	const int z = ltoz(o->layer);
-
 	glBegin (GL_TRIANGLES);
-	glVertex3i (o->x1, o->y1, z);
-	glVertex3i (o->x2, o->y2, z);
-	glVertex3i (o->x3, o->y3, z);
+	glVertex3i (o->x[0], o->y[0], o->z);
+	glVertex3i (o->x[1], o->y[1], o->z);
+	glVertex3i (o->x[2], o->y[2], o->z);
 	glEnd ();
 }
 
@@ -1048,11 +890,14 @@ static inline void
 render_circle (const object_t *o)
 {
 	double angle;
-	const int z = ltoz(o->layer);
+	int x,y;
 
-	glBegin (GL_POLYGON);
-	for (angle = 0; angle < TWO_PI; angle += (TWO_PI / CIRCLE_STEPS))
-		glVertex3i (o->x1 + (int) (sin (angle) * o->radius), o->y1 + (int) (cos (angle) * o->radius), z);
+	glBegin (o->fill ? GL_POLYGON : GL_LINE_LOOP);
+	for (angle = 0; angle < TWO_PI; angle += (TWO_PI / CIRCLE_STEPS)){
+		x = o->x[0] + (int) (sin (angle) * o->radius);
+		y = o->y[0] + (int) (cos (angle) * o->radius);
+		glVertex3i (x,y,o->z);
+		}
 	glEnd ();
 }
 
@@ -1069,8 +914,7 @@ render_arc (const object_t *o)
 	int arcy_inner[CIRCLE_STEPS + 1];
 	int step = 0;
 	int i;
-	const int w = (Width >= 2) ? Width : 2;	// arcs of width <2 would be invisible
-	const int z = ltoz(o->layer);
+	const int w = (o->width >= 2) ? o->width : 2;	// arcs of width <2 would be invisible
 
 	if (angle_delta >= 0)
 		angle_end += angle_delta;
@@ -1091,37 +935,24 @@ render_arc (const object_t *o)
 	if (step > 0 && arcx_outer[step] == arcx_outer[step - 1] && arcy_outer[step] == arcy_outer[step - 1])
 		step--;
 
-	must_glPolygonMode (GL_FRONT_AND_BACK, GL_FILL);	// arcs are always filled
 	for (i = 0; i < step; i++) {
 		glBegin (GL_POLYGON);
-		glVertex3i (o->x1 + arcx_outer[i + 0], o->y1 + arcy_outer[i + 0], z);
-		glVertex3i (o->x1 + arcx_outer[i + 1], o->y1 + arcy_outer[i + 1], z);
-		glVertex3i (o->x1 + arcx_inner[i + 1], o->y1 + arcy_inner[i + 1], z);
-		glVertex3i (o->x1 + arcx_inner[i + 0], o->y1 + arcy_inner[i + 0], z);
+		glVertex3i (o->x[0] + arcx_outer[i + 0], o->y[0] + arcy_outer[i + 0], o->z);
+		glVertex3i (o->x[0] + arcx_outer[i + 1], o->y[0] + arcy_outer[i + 1], o->z);
+		glVertex3i (o->x[0] + arcx_inner[i + 1], o->y[0] + arcy_inner[i + 1], o->z);
+		glVertex3i (o->x[0] + arcx_inner[i + 0], o->y[0] + arcy_inner[i + 0], o->z);
 		glEnd ();
 	}
-	must_glPolygonMode (GL_FRONT_AND_BACK, Fill ? GL_FILL : GL_LINE);
 }
 
 static inline void
-render_width(const object_t *o)
+render_params(const object_t *o)
 {
-	Width = o->width;
 	glLineWidth ((float) o->width);
 	glPointSize ((float) o->width);
-}
-
-static inline void
-render_color(const object_t *o)
-{
 	glColor3ub (o->cr, o->cg, o->cb);
-}
-
-static inline void
-render_fill(const object_t *o)
-{
-	Fill = o->fill;
-	must_glPolygonMode (GL_FRONT_AND_BACK, o->fill ? GL_FILL : GL_LINE);
+	glPolygonMode (GL_FRONT_AND_BACK, o->fill ? GL_FILL : GL_LINE);
+	glRotatef ((float) o->rotate, 0, 0, 1);
 }
 
 // walk the object primitive list and put them into the display buffer
@@ -1130,14 +961,11 @@ Render (void)
 {
 	object_t *o;
 
-	// set defaults
-	render_width(&Root);
-	render_color(&Root);
-	render_fill(&Root);
-
+	render_params(&Root); // set defaults
 	OBJECT_WALK (o) {
-		if( !layer_visible(o) )	// NOTE: non-drawable object are all on layer 0 so they are always visible
+		if( !layer_visible(o) )
 			continue;
+		render_params(o);
 		switch (o->type) {
 		case TYPE_NONE:					break;
 		case TYPE_LINE:		render_line (o);	break;
@@ -1148,9 +976,6 @@ Render (void)
 		case TYPE_TRIANGLE:	render_triangle (o);	break;
 		case TYPE_CIRCLE:	render_circle (o);	break;
 		case TYPE_ARC:		render_arc (o);		break;
-		case TYPE_COLOR:	render_color (o);	break;
-		case TYPE_WIDTH:	render_width (o);	break;
-		case TYPE_FILL:		render_fill (o);	break;
 		}
 	}
 }
@@ -1317,29 +1142,25 @@ Reshape (const int width, const int height)
 
 	//glScalef(1, -1, 1);                   // Invert Y axis so increasing Y goes down.
 	glTranslatef (0, height, 0);		// Shift origin up to upper-left corner.
-
-	View_width = width;
-	View_height = height;
 }
 
 static void
 WindowSetup (void)
 {
-	double		zx, zy;			// zoom required to fit in x and y directions
 	object_t	*o;
+	double		zx, zy;			// zoom required to fit in x and y directions
+	int		w = Maxx - Minx;
+	int		h = Maxy - Miny;
 
-	View_width = Maxx - Minx;
-	View_height = Maxy - Miny;
-
-	// if the image is too big for a maximum window, adjust Zoom to make it initially fit
-	if (View_width > INIT_MAX_WIDTH || View_height > INIT_MAX_HEIGHT) {
-		zx = INIT_MAX_WIDTH / (double) View_width;
-		zy = INIT_MAX_HEIGHT / (double) View_height;
+	// if the image is too big for the initial window size, adjust Zoom to make it fit
+	if (w > INIT_MAX_WIDTH || h > INIT_MAX_HEIGHT) {
+		zx = INIT_MAX_WIDTH / (double) w;
+		zy = INIT_MAX_HEIGHT / (double) h;
 		Zoom = zx < zy ? zx : zy;
 		if (Zoom < ZOOM_MIN)
 			Zoom = ZOOM_MIN;
-		View_width *= Zoom;
-		View_height *= Zoom;
+		w *= Zoom;
+		h *= Zoom;
 	}
 	Zoom_min = Zoom / 2;	// limit zoom out to half the initial window size
 
@@ -1353,7 +1174,7 @@ WindowSetup (void)
 	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glutInitDisplayMode (GLUT_RGB | GLUT_DOUBLE);
 
-	glutInitWindowSize (View_width, View_height);
+	glutInitWindowSize (w, h);
 	glutCreateWindow (Title);
 
 	OBJECT_WALK (o) {	// finalize the list
@@ -1372,13 +1193,14 @@ main (int argc, char **argv)
 	if (argc > 1) {
 		Title = argv[1];
 		if ((fp = fopen (argv[1], "r")) != NULL) {
-			Init (fp);
+			object_scan (fp);
 			fclose (fp);
 		}
 	}
 	else
-		Init (stdin);
+		object_scan (stdin);
 
+	object_wrapup();
 	WindowSetup ();
 
 	glutReshapeFunc (Reshape);

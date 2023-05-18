@@ -43,11 +43,12 @@ main (int argc, char **argv)
 	int x = 0, y = 0;
 
 	(void) argc; (void) argv;
+	printf("Scale %d\n",SCALE);
 	while (fgets (buf, sizeof (buf), stdin) != NULL) {
 		buf[strlen (buf) - 1] = ' ';
 		rnd_color ();
 		rnd_layer ();
-		printf ("Text %d %d 0 %d \"%s\"\n", x * SCALE, y * (SCALE + (SCALE / 2)), SCALE, buf);
+		printf ("Text %d %d \"%s\"\n", x * SCALE, y * (SCALE + (SCALE / 2)), buf);
 		x += strlen (buf);
 		if (x >= COL) {
 			y--;
